@@ -4,3 +4,6 @@
 [submodule "modules/claude-mem"]
 	path = modules/claude-mem
 	url = git@github.com:Bwoah-Kimi/claude-mem.git
+[submodule "modules/superpowers"]
+	path = modules/superpowers
+	url = git@github.com:obra/superpowers.git
