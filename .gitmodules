@@ -7,3 +7,6 @@
 [submodule "modules/superpowers"]
 	path = modules/superpowers
 	url = git@github.com:obra/superpowers.git
+[submodule "modules/llm-wiki-skill"]
+	path = modules/llm-wiki-skill
+	url = git@github.com:Bwoah-Kimi/llm-wiki-skill.git
