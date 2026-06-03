@@ -10,6 +10,7 @@ The root of this repo is a catalog. Each substantial helper owns its implementat
 | --- | --- |
 | [`modules/api-switcher`](modules/api-switcher/README.md) | `cc_api` and `codex_api` provider switchers, provider templates, and merge helpers |
 | [`modules/docx-reader`](modules/docx-reader/README.md) | Codex skill and script for safe `.docx` text extraction |
+| [`modules/zotero-bridge`](modules/zotero-bridge/README.md) | Codex skill and script for read-only Zotero Desktop collection manifests |
 | [`modules/proxy`](modules/proxy/README.md) | `proxy` executable and shell wrapper installer |
 | [`modules/shell-startup-normalizer`](modules/shell-startup-normalizer/README.md) | Codex and Claude Code skill for reorganizing shell startup files |
 | [`modules/vim-setup`](modules/vim-setup/README.md) | Claude Code skill for restoring a preferred Vim setup |
@@ -35,6 +36,7 @@ bash install/install_codex_api.sh
 bash install/install_cc_api.sh
 bash install/install_proxy.sh
 bash install/install_codex_docx_reader_skill.sh
+bash install/install_codex_zotero_bridge_skill.sh
 bash install/install_codex_shell_startup_skill.sh
 bash install/install_claude_shell_startup_skill.sh
 bash install/install_claude_vim_setup_skill.sh
