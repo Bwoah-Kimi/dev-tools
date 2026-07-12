@@ -35,7 +35,20 @@ git add modules/oh-my--paper
 git commit -m "Update Oh-my--paper submodule"
 ```
 
-Use the corresponding module path for other submodules, such as `modules/claude-mem`.
+Use the corresponding module path for other submodules, such as
+`modules/claude-mem` or `modules/llm-wiki-skill`.
+
+For `llm-wiki-skill`, update the submodule first and then refresh the Codex
+installation from the root wrapper:
+
+```powershell
+git -C modules/llm-wiki-skill pull --ff-only
+powershell -ExecutionPolicy Bypass -File .\install\install_codex_llm_wiki_skill.ps1
+git add modules/llm-wiki-skill
+```
+
+The submodule is the source of truth. `$CODEX_HOME/skills/llm-wiki` is an
+installed copy and should not be edited directly.
 
 ## Add a new owned submodule
 

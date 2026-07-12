@@ -11,6 +11,7 @@ The root of this repo is a catalog. Each substantial helper owns its implementat
 | [`modules/api-switcher`](modules/api-switcher/README.md) | `cc_api` and `codex_api` provider switchers, provider templates, and merge helpers |
 | [`modules/docx-reader`](modules/docx-reader/README.md) | Codex skill and script for safe `.docx` text extraction |
 | [`modules/zotero-bridge`](modules/zotero-bridge/README.md) | Codex skill and script for read-only Zotero Desktop collection manifests |
+| [`modules/llm-wiki-skill`](modules/llm-wiki-skill/README.md) | Submodule-backed long-term knowledge-base skill for Codex and other agents |
 | [`modules/proxy`](modules/proxy/README.md) | `proxy` executable and shell wrapper installer |
 | [`modules/shell-startup-normalizer`](modules/shell-startup-normalizer/README.md) | Codex and Claude Code skill for reorganizing shell startup files |
 | [`modules/vim-setup`](modules/vim-setup/README.md) | Claude Code skill for restoring a preferred Vim setup |
@@ -37,6 +38,7 @@ bash install/install_cc_api.sh
 bash install/install_proxy.sh
 bash install/install_codex_docx_reader_skill.sh
 bash install/install_codex_zotero_bridge_skill.sh
+bash install/install_codex_llm_wiki_skill.sh
 bash install/install_codex_shell_startup_skill.sh
 bash install/install_claude_shell_startup_skill.sh
 bash install/install_claude_vim_setup_skill.sh
@@ -48,6 +50,20 @@ Windows native PowerShell installers are available for the API switchers:
 .\install\install_codex_api_windows.ps1
 .\install\install_cc_api_windows.ps1
 ```
+
+The llm-wiki PowerShell wrapper installs the submodule-managed source into
+`$CODEX_HOME/skills/llm-wiki` (by default `~/.codex/skills/llm-wiki`) and
+prefers Git for Windows Bash over WSL:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install\install_codex_llm_wiki_skill.ps1
+```
+
+Update the source with normal submodule Git commands, then rerun the installer
+to refresh the installed Codex copy. The installed copy is not the Git source
+of truth. The wrapper records the submodule checkout in the installed skill so
+`llm-wiki-upgrade` also prefers the managed source instead of cloning a second
+copy.
 
 ## Prerequisites
 
