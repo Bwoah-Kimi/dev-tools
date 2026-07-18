@@ -10,3 +10,6 @@
 [submodule "modules/llm-wiki-skill"]
 	path = modules/llm-wiki-skill
 	url = git@github.com:Bwoah-Kimi/llm-wiki-skill.git
+[submodule "modules/eda-server"]
+	path = modules/eda-server
+	url = git@github.com:pku-pacific-lab-team/eda-server.git
