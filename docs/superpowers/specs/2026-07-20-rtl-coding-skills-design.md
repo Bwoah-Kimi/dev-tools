@@ -75,6 +75,9 @@ rtl-coding-skills/
 │   ├── manifest.json
 │   ├── bin/verilator
 │   └── share/verilator/
+├── tools/verilator/build/
+│   ├── Dockerfile
+│   └── source-lock.json
 ├── third_party/verilator/
 │   ├── LICENSE.LGPL-3.0
 │   ├── LICENSE.Artistic-2.0
@@ -210,8 +213,42 @@ latency/throughput tests, and broader coverage.
 ### Version and Platform
 
 Bundle Verilator 5.050, the current upstream stable tag at design time. Build
-it from the official upstream source in a pinned Linux x86_64 environment.
-Do not copy the developer machine's existing Verilator 5.026 installation.
+it from the official upstream source in the pinned Linux x86_64 environment
+below. Do not copy the developer machine's existing Verilator 5.026
+installation.
+
+The immutable source lock is:
+
+- tag: `v5.050`;
+- annotated tag object: `0a24d49771fa57c36ff667272bf7b5c6705e4df0`;
+- peeled source commit: `848d926ebd4addacacd294dc84e35d9d4ae8078c`;
+- source archive URL:
+  `https://github.com/verilator/verilator/archive/848d926ebd4addacacd294dc84e35d9d4ae8078c.tar.gz`;
+- source archive SHA256:
+  `0e8e4243a98ca7d806a04b8cb19d5f0ed18a246da8f8f1725a075d5ee2e0964e`;
+- `SOURCE_DATE_EPOCH`: `1782944874`, the peeled commit timestamp.
+
+`tools/verilator/build/Dockerfile` uses Linux amd64 and pins
+`ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214`
+(amd64 child digest
+`sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a`).
+APT sources use the immutable Ubuntu snapshot
+`https://snapshot.ubuntu.com/ubuntu/20250701T000000Z/`. This establishes an
+Ubuntu 20.04/glibc 2.31 ABI baseline; the bundled binary must not require a
+newer glibc.
+
+`tools/verilator/build/source-lock.json` stores these values in a
+machine-readable form. `scripts/build-verilator-runtime` requires
+`--source-archive PATH`, verifies the archive against the locked SHA256, and
+runs the pinned container with networking disabled. Downloading the locked
+archive is a separate, explicit maintainer/CI step; neither the build command
+nor the installed runtime downloads source or dependencies.
+
+The container builds with `LC_ALL=C`, `TZ=UTC`, and the locked
+`SOURCE_DATE_EPOCH`, installs into a staging prefix, removes debug/manual-only
+files, strips release binaries deterministically, and emits the bundle. A
+second identical build must produce identical bundled-file hashes before a
+runtime update is accepted.
 
 The bundle contains the Perl front end, release `verilator_bin`, required
 runtime/include files, and configuration data. It excludes debug binaries,
@@ -227,10 +264,16 @@ Use this strict precedence:
 
 1. Run a project's existing Makefile, script, or task-runner entry point
    directly when it exists.
-2. When the shared wrapper is used, honor a project-explicit Verilator path or
-   `VERILATOR` environment variable.
-3. Use a PATH Verilator when the project permits the environment toolchain.
-4. Use bundled Verilator 5.050 only when no project or system tool is selected.
+2. When the shared wrapper is used and `VERILATOR` is non-empty, treat its
+   value as the exact executable path. It must not contain command-line flags;
+   paths containing spaces are supported.
+3. Otherwise resolve `RTL_VERILATOR_SOURCE`, whose accepted values are
+   `auto`, `path`, and `bundled` and whose default is `auto`:
+   - `auto`: use a PATH Verilator when present, otherwise use the bundle;
+   - `path`: require a PATH Verilator and fail if none exists;
+   - `bundled`: skip PATH and require the bundled Verilator.
+4. Reject an empty/unknown source mode or a non-executable explicit path with
+   an actionable configuration error.
 5. If a project entry point was selected and fails, report that failure; do not
    silently retry with the bundled version.
 
@@ -241,6 +284,8 @@ Use this strict precedence:
 - passes Verilator arguments and exit status through unchanged;
 - resolves its plugin root independently of installation location;
 - supports `--self-check` and `--print-selection` diagnostics;
+- implements the `VERILATOR` and `RTL_VERILATOR_SOURCE` contract above without
+  evaluating either value as shell code;
 - validates Linux x86_64 before choosing the bundle;
 - sets `VERILATOR_ROOT` only for the bundled runtime;
 - checks Perl for front-end use and additionally checks `make` and a C++
@@ -256,8 +301,12 @@ only when a task actually needs Verilator.
 ### Provenance and Licensing
 
 `tools/verilator/linux-x86_64/manifest.json` records the exact upstream tag,
-source URL, architecture, build environment/ABI baseline, and file checksums.
-Build timestamps do not affect reproducible content hashes.
+commit, archive SHA256, source URL, architecture, container and child image
+digests, Ubuntu snapshot, glibc baseline, and `SOURCE_DATE_EPOCH`. It covers
+every bundled file except `manifest.json` itself: regular files are recorded
+with relative path, executable mode, size, and SHA256; symlinks are recorded
+with relative path and link target. Entries are bytewise sorted by relative
+path. Wall-clock build timestamps are omitted.
 
 The repository's own content uses Apache-2.0. Verilator retains its upstream
 `LGPL-3.0-only OR Artistic-2.0` notices and license materials under
@@ -295,7 +344,8 @@ Automated checks cover:
 - `bash -n`, `shellcheck`, and executable modes for shell scripts;
 - absence of TODO placeholders, `hardware_design`, `therm_top.sv`, and
   developer-machine absolute paths from runtime instructions and artifacts;
-- Verilator provenance, licensing, and checksums.
+- Verilator provenance, licensing, source lock, builder-image pins, and the
+  complete sorted checksum/mode manifest.
 
 ### Runtime Tests
 
@@ -304,8 +354,14 @@ Tests must prove:
 - bundled `verilator --version` reports 5.050;
 - valid RTL lint succeeds and deliberately invalid RTL lint fails;
 - a minimal self-checking testbench builds and runs;
-- an explicit project Verilator overrides PATH and bundled tools;
-- a permitted PATH Verilator overrides the bundle;
+- an explicit `VERILATOR` executable, including a path containing spaces,
+  overrides PATH and bundled tools without shell evaluation;
+- `RTL_VERILATOR_SOURCE=auto` selects PATH and then bundled fallback in the
+  documented order;
+- `RTL_VERILATOR_SOURCE=path` fails rather than falling back when PATH has no
+  Verilator;
+- `RTL_VERILATOR_SOURCE=bundled` ignores PATH and selects the bundle;
+- invalid modes and non-executable explicit paths fail clearly;
 - missing dependencies and unsupported bundled platforms fail clearly;
 - installed files contain no dependency on the build machine's paths.
 
@@ -324,13 +380,24 @@ marketplace, updates/reinstalls the plugin, and starts a new session.
 
 ## `dev-tools` Integration
 
-After the module repository contains committed implementation:
+Integration has two explicit authorization boundaries:
 
-1. register `modules/rtl-coding-skills` in `.gitmodules` using the SSH remote;
-2. add its pinned Git commit as a submodule entry;
-3. update `docs/submodules.md` only with root-repository maintenance details;
-4. stage neither the user-updated `modules/eda-server` pointer nor unrelated
-   worktree state;
-5. validate the submodule from a clean clone path.
-
-Remote pushes remain a separate explicit user decision.
+1. Safely connect the existing `modules/rtl-coding-skills` working directory to
+   remote `main`, implement the plugin, and commit it locally in the module
+   repository.
+2. Stop and request authorization to push the module commit. If authorization
+   is not granted, leave the local module repository intact and do not create
+   a root-repository gitlink.
+3. If authorized, push the module commit and use `git ls-remote` or a fresh
+   fetch to prove that the exact commit is reachable from the module remote.
+4. Only after that proof, register `modules/rtl-coding-skills` in `.gitmodules`
+   using the SSH remote and add the remotely reachable commit as a submodule
+   entry.
+5. Update `docs/submodules.md` only with root-repository maintenance details,
+   stage neither the user-updated `modules/eda-server` pointer nor unrelated
+   worktree state, and commit the root integration locally.
+6. Validate the registered submodule by cloning/initializing it into a fresh
+   temporary path from the remote, not by relying on the developer working
+   directory.
+7. Treat pushing the root `dev-tools` commit as a second, separate explicit
+   authorization decision.
