@@ -38,7 +38,9 @@ Verilator is a shared plugin runtime, not a third user-visible skill.
 - Do not support macOS, Windows-native, or Linux architectures other than
   x86_64 in the first bundled runtime release. WSL2 is supported as Linux.
 - Do not introduce an MCP server, lifecycle hooks, background processes, or
-  automatic network downloads.
+  network downloads in the installed plugin runtime. Maintainer-only builder
+  provisioning may access only the content-addressed Ubuntu base image and
+  locked Ubuntu snapshot described below.
 - Do not force one repository layout, Makefile, filelist, simulator entry
   point, naming scheme, or formatting style onto an established project.
 - Do not silently replace a project-configured Verilator after its command
@@ -70,6 +72,7 @@ rtl-coding-skills/
 │   └── verilator-runtime.md
 ├── scripts/
 │   ├── run-verilator
+│   ├── provision-verilator-builder
 │   └── build-verilator-runtime
 ├── tools/verilator/linux-x86_64/
 │   ├── manifest.json
@@ -77,6 +80,7 @@ rtl-coding-skills/
 │   └── share/verilator/
 ├── tools/verilator/build/
 │   ├── Dockerfile
+│   ├── builder-lock.json
 │   └── source-lock.json
 ├── third_party/verilator/
 │   ├── LICENSE.LGPL-3.0
@@ -234,17 +238,39 @@ The immutable source lock is:
 `sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a`).
 APT sources use the immutable Ubuntu snapshot
 `https://snapshot.ubuntu.com/ubuntu/20250701T000000Z/`. This establishes an
-Ubuntu 20.04/glibc 2.31 ABI baseline; the bundled binary must not require a
-newer glibc.
+Ubuntu 20.04 ABI baseline. The minimum supported runtime ABI is GNU/Linux
+x86_64 with glibc 2.31; the bundled binary must not require newer GLIBC symbol
+versions.
 
 `tools/verilator/build/source-lock.json` stores these values in a
-machine-readable form. `scripts/build-verilator-runtime` requires
-`--source-archive PATH`, verifies the archive against the locked SHA256, and
-runs the pinned container with networking disabled. Downloading the locked
-archive is a separate, explicit maintainer/CI step; neither the build command
-nor the installed runtime downloads source or dependencies.
+machine-readable form. Builder provisioning and runtime compilation are
+separate commands:
 
-The container builds with `LC_ALL=C`, `TZ=UTC`, and the locked
+1. `scripts/provision-verilator-builder` is the only networked build command.
+   It constructs the builder from `tools/verilator/build/Dockerfile`, the
+   pinned Ubuntu image, and the immutable Ubuntu snapshot above. The
+   command may pull the base image only by its locked digest; the Dockerfile
+   may fetch build packages only from the locked snapshot. It never downloads
+   Verilator source.
+2. Provisioning exports the builder as an OCI image, builds it twice with
+   timestamp rewriting and provenance/SBOM emission disabled, and requires
+   identical OCI config and layer digests. `tools/verilator/build/builder-lock.json`
+   records the Dockerfile SHA256, base index/child digests, snapshot URL, OCI
+   config digest, and ordered layer digests.
+3. Normal provisioning verifies its result against the committed builder lock
+   and fails on mismatch. Updating `builder-lock.json` requires the explicit
+   `--update-lock` option and is permitted only as part of a reviewed runtime
+   version update.
+4. `scripts/build-verilator-runtime` requires a locally provisioned builder
+   whose OCI config/layers match `builder-lock.json`. It also requires
+   `--source-archive PATH`, verifies the archive against `source-lock.json`,
+   mounts it read-only, and runs compilation with networking disabled.
+
+Downloading the locked source archive is a separate, explicit maintainer/CI
+step. The installed plugin never provisions builders, downloads source, or
+downloads dependencies.
+
+The compile container builds with `LC_ALL=C`, `TZ=UTC`, and the locked
 `SOURCE_DATE_EPOCH`, installs into a staging prefix, removes debug/manual-only
 files, strips release binaries deterministically, and emits the bundle. A
 second identical build must produce identical bundled-file hashes before a
@@ -341,7 +367,7 @@ Automated checks cover:
 - `agents/openai.yaml` consistency;
 - valid Claude and Codex manifests and marketplaces;
 - equality of the three release-version fields;
-- `bash -n`, `shellcheck`, and executable modes for shell scripts;
+- `bash -n`, `shellcheck`, and executable modes for all three shell scripts;
 - absence of TODO placeholders, `hardware_design`, `therm_top.sv`, and
   developer-machine absolute paths from runtime instructions and artifacts;
 - Verilator provenance, licensing, source lock, builder-image pins, and the
@@ -363,6 +389,9 @@ Tests must prove:
 - `RTL_VERILATOR_SOURCE=bundled` ignores PATH and selects the bundle;
 - invalid modes and non-executable explicit paths fail clearly;
 - missing dependencies and unsupported bundled platforms fail clearly;
+- `readelf --version-info` reports no required GLIBC symbol version newer than
+  2.31, and the bundle passes version/lint/build smoke tests in the pinned
+  Ubuntu 20.04 baseline with runtime dependencies from the locked snapshot;
 - installed files contain no dependency on the build machine's paths.
 
 ## Versioning and Maintenance
