@@ -10,11 +10,14 @@ The root of this repo is a catalog. Each substantial helper owns its implementat
 | --- | --- |
 | [`modules/api-switcher`](modules/api-switcher/README.md) | `cc_api` and `codex_api` provider switchers, provider templates, and merge helpers |
 | [`modules/docx-reader`](modules/docx-reader/README.md) | Codex skill and script for safe `.docx` text extraction |
+| [`modules/claude-mem`](modules/claude-mem/README.md) | Submodule-backed persistent memory compression for Claude Code sessions |
 | [`modules/zotero-bridge`](modules/zotero-bridge/README.md) | Codex skill and script for read-only Zotero Desktop collection manifests |
 | [`modules/llm-wiki-skill`](modules/llm-wiki-skill/README.md) | Submodule-backed long-term knowledge-base skill for Codex and other agents |
 | [`modules/eda-server`](modules/eda-server/README.md) | Submodule-backed shared lab skills for EDA server access, tmux-managed jobs, and tapeout archiving |
+| [`modules/rtl-coding-skills`](modules/rtl-coding-skills/README.md) | Submodule-backed Claude Code and Codex skills for project-aware RTL authoring and Verilator verification |
 | [`modules/proxy`](modules/proxy/README.md) | `proxy` executable and shell wrapper installer |
 | [`modules/shell-startup-normalizer`](modules/shell-startup-normalizer/README.md) | Codex and Claude Code skill for reorganizing shell startup files |
+| [`modules/superpowers`](modules/superpowers/README.md) | Submodule-backed composable software-development workflow skills for coding agents |
 | [`modules/vim-setup`](modules/vim-setup/README.md) | Claude Code skill for restoring a preferred Vim setup |
 | [`modules/oh-my--paper`](modules/oh-my--paper/README.md) | Submodule-backed paper reading project with its own docs |
 
