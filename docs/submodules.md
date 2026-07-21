@@ -11,6 +11,17 @@ modules/claude-mem/
 
 Each submodule owns its own implementation, README, docs, and tests. The root repo owns only the module catalog, optional wrapper glue, and the pinned submodule commit.
 
+Unless noted otherwise, run the commands below from the `dev-tools` repository
+root. Submodule URLs use GitHub SSH, so maintainers must configure an SSH key
+and have read access to each private submodule repository before initializing
+or updating it. In particular, `rtl-coding-skills` requires read permission for
+`pku-pacific-lab-team/rtl-coding-skills`. Check that access without changing the
+working tree:
+
+```bash
+git ls-remote git@github.com:pku-pacific-lab-team/rtl-coding-skills.git refs/heads/main
+```
+
 ## Clone and initialize
 
 ```bash
@@ -37,6 +48,18 @@ git commit -m "Update Oh-my--paper submodule"
 
 Use the corresponding module path for other submodules, such as
 `modules/claude-mem` or `modules/llm-wiki-skill`.
+
+From the `dev-tools` repository root, use the normal fetch, checkout, pull, and
+root pin workflow for `rtl-coding-skills`:
+
+```bash
+git -C modules/rtl-coding-skills fetch origin
+git -C modules/rtl-coding-skills checkout main
+git -C modules/rtl-coding-skills pull --ff-only
+git add modules/rtl-coding-skills
+git diff --cached --submodule=log
+git commit -m "Update rtl-coding-skills submodule"
+```
 
 For `llm-wiki-skill`, update the submodule first and then refresh the Codex
 installation from the root wrapper:

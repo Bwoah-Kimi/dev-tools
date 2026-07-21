@@ -13,3 +13,6 @@
 [submodule "modules/eda-server"]
 	path = modules/eda-server
 	url = git@github.com:pku-pacific-lab-team/eda-server.git
+[submodule "modules/rtl-coding-skills"]
+	path = modules/rtl-coding-skills
+	url = git@github.com:pku-pacific-lab-team/rtl-coding-skills.git
