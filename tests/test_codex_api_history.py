@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -114,8 +115,12 @@ class CodexApiHistoryTest(unittest.TestCase):
     def run_api(self, *arguments: str) -> subprocess.CompletedProcess:
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self.codex_home)
+        # Run codex_api with the test runner's own interpreter: CreateProcess
+        # cannot execute a shebang script directly on Windows (WinError 193),
+        # and sys.executable is guaranteed to satisfy the script's Python
+        # version requirement wherever the tests themselves can run.
         return subprocess.run(
-            [str(CODEX_API), *arguments],
+            [sys.executable, str(CODEX_API), *arguments],
             cwd=REPO_ROOT,
             env=environment,
             check=False,
