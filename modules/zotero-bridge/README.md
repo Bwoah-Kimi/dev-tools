@@ -1,8 +1,8 @@
 # zotero-bridge
 
-Codex skill and helper script for reading Zotero Desktop collections through the
-local Zotero API and exporting research-direction manifests for downstream
-workflows such as llm-wiki ingestion.
+Codex and Claude Code skill with a helper script for reading Zotero Desktop
+collections through the local Zotero API and exporting research-direction
+manifests for downstream workflows such as llm-wiki ingestion.
 
 Zotero remains the source of truth. This module reads collections, items, and
 PDF attachment paths from the local API; it does not modify the Zotero library
@@ -10,14 +10,23 @@ or copy PDF files.
 
 ## Install
 
+Codex:
+
 ```bash
 bash modules/zotero-bridge/install/install_codex_zotero_bridge_skill.sh
 ```
 
-Root compatibility wrapper:
+Claude Code:
+
+```bash
+bash modules/zotero-bridge/install/install_claude_zotero_bridge_skill.sh
+```
+
+Root compatibility wrappers:
 
 ```bash
 bash install/install_codex_zotero_bridge_skill.sh
+bash install/install_claude_zotero_bridge_skill.sh
 ```
 
 ## Zotero Setup

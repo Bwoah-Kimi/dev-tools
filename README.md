@@ -42,6 +42,7 @@ bash install/install_cc_api.sh
 bash install/install_proxy.sh
 bash install/install_codex_docx_reader_skill.sh
 bash install/install_codex_zotero_bridge_skill.sh
+bash install/install_claude_zotero_bridge_skill.sh
 bash install/install_codex_llm_wiki_skill.sh
 bash install/install_codex_shell_startup_skill.sh
 bash install/install_claude_shell_startup_skill.sh
