@@ -16,3 +16,6 @@
 [submodule "modules/rtl-coding-skills"]
 	path = modules/rtl-coding-skills
 	url = git@github.com:pku-pacific-lab-team/rtl-coding-skills.git
+[submodule "modules/ppt-master"]
+	path = modules/ppt-master
+	url = git@github.com:hugohe3/ppt-master.git
