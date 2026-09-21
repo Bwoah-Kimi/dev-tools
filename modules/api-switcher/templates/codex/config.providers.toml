@@ -1,4 +1,11 @@
-model_provider = "codex-for-me-main"
+model_provider = "micu"
+
+[model_providers.PACIFIC-Lab]
+name = "PACIFIC-Lab"
+base_url = "https://api.tianyuj.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true
 
 [model_providers.packycode]
 name = "packycode"
@@ -8,7 +15,7 @@ requires_openai_auth = true
 
 [model_providers.micu]
 name = "micu"
-base_url = "https://www.openclaudecode.cn/v1"
+base_url = "https://www.micuapi.ai/v1"
 wire_api = "responses"
 requires_openai_auth = true
 

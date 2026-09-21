@@ -1,15 +1,29 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import os
 import re
+import shutil
+import sqlite3
+import stat
 import sys
 import tempfile
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.umask(0o077)
 
 SECTION_RE = re.compile(r"^\[([^\]]+)\]\s*$")
 KEY_VALUE_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*=\s*(.+)\s*$")
+STATE_DB_RE = re.compile(r"^state_(\d+)\.sqlite$")
+BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+BACKUP_FORMAT_VERSION = 1
+
+
+class HistoryError(Exception):
+    pass
 
 
 def eprint(message: str) -> None:
@@ -25,9 +39,16 @@ def usage(exit_code: int = 1) -> None:
     message = "\n".join(
         [
             "Usage:",
-            "  codex_api -l, --list              List available providers",
-            "  codex_api -c, --current           Show active provider",
-            "  codex_api -s, --switch <provider>  Switch to a provider",
+            "  codex_api -l, --list",
+            "  codex_api -c, --current",
+            "  codex_api -s, --switch <provider> [--sync-history] [--dry-run]",
+            "  codex_api --sync-history [provider] [--dry-run]",
+            "  codex_api --history-backups",
+            "  codex_api --restore-history <backup-id> [--dry-run]",
+            "  codex_api --delete-history [backup-id|all] [--dry-run]",
+            "",
+            "History migration updates Codex JSONL metadata and the SQLite thread index.",
+            "Delete-history removes only provider-migration backup manifests, not conversations.",
         ]
     )
     if exit_code == 0:
@@ -35,6 +56,51 @@ def usage(exit_code: int = 1) -> None:
     else:
         eprint(message)
     raise SystemExit(exit_code)
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("-l", "--list", action="store_true")
+    parser.add_argument("-c", "--current", action="store_true")
+    parser.add_argument("-s", "--switch", metavar="PROVIDER")
+    parser.add_argument("--sync-history", nargs="?", const="", metavar="PROVIDER")
+    parser.add_argument("--history-backups", action="store_true")
+    parser.add_argument("--restore-history", metavar="BACKUP_ID")
+    parser.add_argument(
+        "--delete-history", nargs="?", const="all", metavar="BACKUP_ID_OR_ALL"
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        usage(1)
+
+    if args.help:
+        usage(0)
+
+    primary_count = sum(
+        [
+            args.list,
+            args.current,
+            args.switch is not None,
+            args.sync_history is not None and args.switch is None,
+            args.history_backups,
+            args.restore_history is not None,
+            args.delete_history is not None,
+        ]
+    )
+    if primary_count != 1:
+        usage(1)
+    if args.dry_run and not any(
+        [
+            args.sync_history is not None,
+            args.restore_history is not None,
+            args.delete_history is not None,
+        ]
+    ):
+        fail("--dry-run requires a history operation")
+    return args
 
 
 def parse_toml_scalar(raw_value: str, *, path: Path, line_number: int) -> object:
@@ -70,7 +136,7 @@ def load_config(path: Path) -> tuple[dict, str]:
         if section_match:
             current_section = section_match.group(1)
             if current_section.startswith("model_providers."):
-                current_provider = current_section[len("model_providers."):]
+                current_provider = current_section[len("model_providers.") :]
                 if not current_provider:
                     fail(f"malformed provider section in {path}:{line_number}")
                 providers[current_provider] = {}
@@ -85,10 +151,10 @@ def load_config(path: Path) -> tuple[dict, str]:
             continue
 
         key, raw_value = key_value_match.groups()
-
         if current_provider is not None:
-            value = parse_toml_scalar(raw_value, path=path, line_number=line_number)
-            providers[current_provider][key] = value
+            providers[current_provider][key] = parse_toml_scalar(
+                raw_value, path=path, line_number=line_number
+            )
         elif current_section is None and key == "model_provider":
             value = parse_toml_scalar(raw_value, path=path, line_number=line_number)
             if not isinstance(value, str) or not value:
@@ -112,7 +178,6 @@ def load_json(path: Path, *, required: bool) -> dict:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         fail(f"malformed JSON in {path}: {exc}")
-
     if not isinstance(data, dict):
         fail(f"expected JSON object in {path}")
     return data
@@ -130,6 +195,8 @@ def write_text_atomic(path: Path, content: str, *, mode: int) -> None:
             delete=False,
         ) as handle:
             handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
             temp_path = Path(handle.name)
         os.chmod(temp_path, mode)
         os.replace(temp_path, path)
@@ -142,83 +209,592 @@ def write_text_atomic(path: Path, content: str, *, mode: int) -> None:
 
 def replace_model_provider(config_text: str, provider: str) -> str:
     pattern = re.compile(r'(?m)^model_provider\s*=\s*"[^"]*"\s*$')
-    updated, count = pattern.subn(f'model_provider = "{provider}"', config_text, count=1)
+    updated, count = pattern.subn(
+        f'model_provider = "{provider}"', config_text, count=1
+    )
     if count != 1:
         fail("could not locate top-level model_provider in config.toml")
     return updated
 
 
-def parse_provider_argument(argv: list[str], index: int) -> str:
-    if index >= len(argv):
-        fail("--switch requires a provider name")
-    return argv[index]
+def codex_home() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+
+
+def find_state_db(codex_dir: Path) -> Path:
+    candidates = []
+    for path in codex_dir.glob("state_*.sqlite"):
+        match = STATE_DB_RE.match(path.name)
+        if match:
+            candidates.append((int(match.group(1)), path))
+    if not candidates:
+        raise HistoryError(f"missing Codex state database in {codex_dir}")
+    return max(candidates)[1]
+
+
+def validate_state_db(connection: sqlite3.Connection, path: Path) -> None:
+    rows = connection.execute("PRAGMA table_info(threads)").fetchall()
+    columns = {row[1] for row in rows}
+    required = {"id", "rollout_path", "model_provider"}
+    if not required.issubset(columns):
+        missing = ", ".join(sorted(required - columns))
+        raise HistoryError(f"unsupported Codex database schema in {path}: missing {missing}")
+
+
+def parse_session(path: Path, codex_dir: Path) -> dict[str, str]:
+    if path.is_symlink():
+        raise HistoryError(f"refusing symlinked session file: {path}")
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            first_line = handle.readline()
+    except (OSError, UnicodeError) as exc:
+        raise HistoryError(f"failed to read session metadata from {path}: {exc}") from exc
+    try:
+        record = json.loads(first_line)
+    except json.JSONDecodeError as exc:
+        raise HistoryError(f"malformed first JSONL record in {path}: {exc}") from exc
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if record.get("type") != "session_meta" or not isinstance(payload, dict):
+        raise HistoryError(f"unsupported session metadata in {path}")
+    thread_id = payload.get("id")
+    provider = payload.get("model_provider")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise HistoryError(f"missing session id in {path}")
+    if not isinstance(provider, str) or not provider:
+        raise HistoryError(f"missing model_provider in {path}")
+    return {
+        "id": thread_id,
+        "path": path.relative_to(codex_dir).as_posix(),
+        "provider": provider,
+    }
+
+
+def collect_sessions(codex_dir: Path) -> list[dict[str, str]]:
+    sessions = []
+    seen_ids = set()
+    for directory_name in ("sessions", "archived_sessions"):
+        directory = codex_dir / directory_name
+        if not directory.exists():
+            continue
+        compressed = sorted(directory.rglob("*.jsonl.zst"))
+        if compressed:
+            raise HistoryError(
+                f"compressed Codex sessions are not supported yet: {compressed[0]}"
+            )
+        for path in sorted(directory.rglob("*.jsonl")):
+            session = parse_session(path, codex_dir)
+            if session["id"] in seen_ids:
+                raise HistoryError(f"duplicate Codex session id: {session['id']}")
+            seen_ids.add(session["id"])
+            sessions.append(session)
+    return sessions
+
+
+def set_session_provider(
+    path: Path, *, expected_provider: str, target_provider: str
+) -> None:
+    file_stat = path.stat()
+    temp_path = None
+    try:
+        with path.open("r", encoding="utf-8") as source:
+            first_line = source.readline()
+            record = json.loads(first_line)
+            payload = record.get("payload") if isinstance(record, dict) else None
+            current_provider = payload.get("model_provider") if isinstance(payload, dict) else None
+            if record.get("type") != "session_meta" or current_provider != expected_provider:
+                raise HistoryError(
+                    f"session metadata changed while migrating: {path}"
+                )
+            payload["model_provider"] = target_provider
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                delete=False,
+            ) as target:
+                target.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+                target.write("\n")
+                shutil.copyfileobj(source, target)
+                target.flush()
+                os.fsync(target.fileno())
+                temp_path = Path(target.name)
+        os.chmod(temp_path, stat.S_IMODE(file_stat.st_mode))
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def backup_directory(codex_dir: Path) -> Path:
+    return codex_dir / "history-provider-backups"
+
+
+def new_backup_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}-{uuid.uuid4().hex[:8]}"
+
+
+def backup_path(codex_dir: Path, backup_id: str) -> Path:
+    if not BACKUP_ID_RE.fullmatch(backup_id):
+        raise HistoryError(f"invalid backup id: {backup_id}")
+    return backup_directory(codex_dir) / f"{backup_id}.json"
+
+
+def write_manifest(path: Path, manifest: dict) -> None:
+    content = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, path)
+    except OSError as exc:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise HistoryError(f"failed to write history backup {path}: {exc}") from exc
+
+
+def load_manifest(codex_dir: Path, backup_id: str) -> dict:
+    path = backup_path(codex_dir, backup_id)
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HistoryError(f"unknown history backup: {backup_id}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HistoryError(f"failed to read history backup {path}: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("format_version") != BACKUP_FORMAT_VERSION:
+        raise HistoryError(f"unsupported history backup format: {path}")
+    if not isinstance(manifest.get("sessions"), list) or not isinstance(
+        manifest.get("database_threads"), list
+    ):
+        raise HistoryError(f"malformed history backup: {path}")
+    return manifest
+
+
+@contextmanager
+def hold_writer_locks(codex_dir: Path):
+    lock_dir = codex_dir / "thread-writer-locks"
+    lock_paths = [lock_dir / ".coordination.lock"]
+    if lock_dir.exists():
+        lock_paths.extend(sorted(lock_dir.glob("*.lock")))
+    handles = []
+    try:
+        if os.name == "posix":
+            import fcntl
+
+            for path in dict.fromkeys(lock_paths):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                handle = path.open("a+b")
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    handle.close()
+                    raise HistoryError(
+                        "a Codex session is active; close Codex CLI and VS Code before migrating history"
+                    ) from exc
+                handles.append(handle)
+        yield
+    finally:
+        for handle in reversed(handles):
+            handle.close()
+
+
+def apply_history_changes(
+    codex_dir: Path,
+    state_db: Path,
+    *,
+    operation: str,
+    target: str,
+    session_changes: list[dict[str, str]],
+    database_changes: list[dict[str, str]],
+) -> str | None:
+    if not session_changes and not database_changes:
+        return None
+
+    backup_id = new_backup_id()
+    manifest_path = backup_path(codex_dir, backup_id)
+    manifest = {
+        "format_version": BACKUP_FORMAT_VERSION,
+        "id": backup_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "operation": operation,
+        "target": target,
+        "status": "prepared",
+        "sessions": [
+            {
+                "id": change["id"],
+                "path": change["path"],
+                "provider": change["current_provider"],
+            }
+            for change in session_changes
+        ],
+        "database_threads": [
+            {"id": change["id"], "provider": change["current_provider"]}
+            for change in database_changes
+        ],
+    }
+
+    changed_sessions = []
+    connection = sqlite3.connect(state_db, timeout=1)
+    database_committed = False
+    try:
+        validate_state_db(connection, state_db)
+        connection.execute("BEGIN IMMEDIATE")
+        write_manifest(manifest_path, manifest)
+        for change in session_changes:
+            path = codex_dir / Path(change["path"])
+            set_session_provider(
+                path,
+                expected_provider=change["current_provider"],
+                target_provider=change["target_provider"],
+            )
+            changed_sessions.append(change)
+        for change in database_changes:
+            cursor = connection.execute(
+                "UPDATE threads SET model_provider = ? WHERE id = ? AND model_provider = ?",
+                (
+                    change["target_provider"],
+                    change["id"],
+                    change["current_provider"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise HistoryError(
+                    f"database thread changed while migrating: {change['id']}"
+                )
+        connection.commit()
+        database_committed = True
+        manifest["status"] = "complete"
+        write_manifest(manifest_path, manifest)
+        return backup_id
+    except Exception as exc:
+        if database_committed:
+            raise HistoryError(
+                f"history was migrated, but backup finalization failed; recovery manifest: {manifest_path}: {exc}"
+            ) from exc
+        connection.rollback()
+        rollback_error = None
+        for change in reversed(changed_sessions):
+            try:
+                set_session_provider(
+                    codex_dir / Path(change["path"]),
+                    expected_provider=change["target_provider"],
+                    target_provider=change["current_provider"],
+                )
+            except Exception as rollback_exc:
+                rollback_error = rollback_exc
+                break
+        if rollback_error is None:
+            manifest_path.unlink(missing_ok=True)
+            raise HistoryError(f"history migration failed and was rolled back: {exc}") from exc
+        raise HistoryError(
+            f"history migration failed; rollback also failed ({rollback_error}); recovery manifest: {manifest_path}"
+        ) from exc
+    finally:
+        connection.close()
+
+
+def read_database_providers(state_db: Path) -> dict[str, str]:
+    try:
+        connection = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=1)
+        validate_state_db(connection, state_db)
+        rows = connection.execute("SELECT id, model_provider FROM threads").fetchall()
+    except sqlite3.Error as exc:
+        raise HistoryError(f"failed to read Codex state database {state_db}: {exc}") from exc
+    finally:
+        if "connection" in locals():
+            connection.close()
+    providers = {}
+    for thread_id, provider in rows:
+        if not isinstance(thread_id, str) or not isinstance(provider, str) or not provider:
+            raise HistoryError(f"invalid thread provider metadata in {state_db}")
+        providers[thread_id] = provider
+    return providers
+
+
+def sync_history(codex_dir: Path, target_provider: str, *, dry_run: bool) -> None:
+    state_db = find_state_db(codex_dir)
+    sessions = collect_sessions(codex_dir)
+    database_providers = read_database_providers(state_db)
+    session_changes = [
+        {
+            "id": session["id"],
+            "path": session["path"],
+            "current_provider": session["provider"],
+            "target_provider": target_provider,
+        }
+        for session in sessions
+        if session["provider"] != target_provider
+    ]
+    database_changes = [
+        {
+            "id": thread_id,
+            "current_provider": provider,
+            "target_provider": target_provider,
+        }
+        for thread_id, provider in database_providers.items()
+        if provider != target_provider
+    ]
+    action = "would update" if dry_run else "updating"
+    print(
+        f"{action}: {len(session_changes)} session files and "
+        f"{len(database_changes)} database threads -> {target_provider}"
+    )
+    if dry_run or (not session_changes and not database_changes):
+        if not session_changes and not database_changes:
+            print("history already belongs to the target provider")
+        return
+    with hold_writer_locks(codex_dir):
+        backup_id = apply_history_changes(
+            codex_dir,
+            state_db,
+            operation="sync",
+            target=target_provider,
+            session_changes=session_changes,
+            database_changes=database_changes,
+        )
+    print(f"history synchronized to {target_provider}")
+    print(f"backup: {backup_id}")
+
+
+def restore_history(codex_dir: Path, backup_id: str, *, dry_run: bool) -> None:
+    manifest = load_manifest(codex_dir, backup_id)
+    state_db = find_state_db(codex_dir)
+    sessions_by_id = {session["id"]: session for session in collect_sessions(codex_dir)}
+    database_providers = read_database_providers(state_db)
+    session_changes = []
+    for saved in manifest["sessions"]:
+        thread_id = saved.get("id")
+        target_provider = saved.get("provider")
+        current = sessions_by_id.get(thread_id)
+        if current is None:
+            raise HistoryError(f"cannot restore missing session: {thread_id}")
+        if not isinstance(target_provider, str) or not target_provider:
+            raise HistoryError(f"malformed provider in backup {backup_id}")
+        if current["provider"] != target_provider:
+            session_changes.append(
+                {
+                    "id": thread_id,
+                    "path": current["path"],
+                    "current_provider": current["provider"],
+                    "target_provider": target_provider,
+                }
+            )
+    database_changes = []
+    for saved in manifest["database_threads"]:
+        thread_id = saved.get("id")
+        target_provider = saved.get("provider")
+        if thread_id not in database_providers:
+            raise HistoryError(f"cannot restore missing database thread: {thread_id}")
+        if not isinstance(target_provider, str) or not target_provider:
+            raise HistoryError(f"malformed database provider in backup {backup_id}")
+        if database_providers[thread_id] != target_provider:
+            database_changes.append(
+                {
+                    "id": thread_id,
+                    "current_provider": database_providers[thread_id],
+                    "target_provider": target_provider,
+                }
+            )
+    action = "would restore" if dry_run else "restoring"
+    print(
+        f"{action}: {len(session_changes)} session files and "
+        f"{len(database_changes)} database threads from {backup_id}"
+    )
+    if dry_run or (not session_changes and not database_changes):
+        if not session_changes and not database_changes:
+            print("history already matches this backup")
+        return
+    with hold_writer_locks(codex_dir):
+        recovery_id = apply_history_changes(
+            codex_dir,
+            state_db,
+            operation="restore",
+            target=backup_id,
+            session_changes=session_changes,
+            database_changes=database_changes,
+        )
+    print(f"history restored from {backup_id}")
+    print(f"backup of pre-restore state: {recovery_id}")
+
+
+def list_history_backups(codex_dir: Path) -> None:
+    paths = sorted(backup_directory(codex_dir).glob("*.json"), reverse=True)
+    if not paths:
+        print("no history provider backups")
+        return
+    for path in paths:
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            print(
+                f"{path.stem}  {manifest.get('operation', '?')}  "
+                f"target: {manifest.get('target', '?')}  "
+                f"sessions: {len(manifest.get('sessions', []))}  "
+                f"status: {manifest.get('status', '?')}"
+            )
+        except (OSError, json.JSONDecodeError):
+            print(f"{path.stem}  unreadable")
+
+
+def delete_history_backups(codex_dir: Path, target: str, *, dry_run: bool) -> None:
+    directory = backup_directory(codex_dir)
+    if target == "all":
+        paths = sorted(directory.glob("*.json"))
+    else:
+        path = backup_path(codex_dir, target)
+        if not path.exists():
+            raise HistoryError(f"unknown history backup: {target}")
+        paths = [path]
+    if not paths:
+        print("no history provider backups")
+        return
+    if dry_run:
+        print(f"would delete {len(paths)} history provider backup(s)")
+        return
+    for path in paths:
+        path.unlink()
+    print(f"deleted {len(paths)} history provider backup(s)")
+
+
+def switch_provider(
+    provider: str,
+    *,
+    providers: dict,
+    auth_list_path: Path,
+    config_path: Path,
+    config_text: str,
+    auth_path: Path,
+) -> None:
+    if provider not in providers:
+        available = ", ".join(providers.keys())
+        fail(f"unknown provider '{provider}'. available: {available}")
+    auth_list = load_json(auth_list_path, required=True)
+    target_key = auth_list.get(provider)
+    if not isinstance(target_key, str) or not target_key:
+        fail(f"missing API key for provider '{provider}' in {auth_list_path}")
+    write_text_atomic(
+        config_path, replace_model_provider(config_text, provider), mode=0o600
+    )
+    write_text_atomic(
+        auth_path,
+        json.dumps({"OPENAI_API_KEY": target_key}, indent=2) + "\n",
+        mode=0o600,
+    )
+    print(f"switched to {provider}")
+    print(f"updated: {config_path}")
+    print(f"updated: {auth_path}")
+
+
+def validate_switch(provider: str, *, providers: dict, auth_list_path: Path) -> None:
+    if provider not in providers:
+        available = ", ".join(providers.keys())
+        fail(f"unknown provider '{provider}'. available: {available}")
+    auth_list = load_json(auth_list_path, required=True)
+    target_key = auth_list.get(provider)
+    if not isinstance(target_key, str) or not target_key:
+        fail(f"missing API key for provider '{provider}' in {auth_list_path}")
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] in {"-h", "--help"}:
-        usage(0 if argv and argv[0].startswith("-") else 1)
-
-    codex_dir = Path.home() / ".codex"
+    if not argv:
+        usage(1)
+    args = parse_args(argv)
+    codex_dir = codex_home()
     config_path = codex_dir / "config.toml"
     auth_path = codex_dir / "auth.json"
     auth_list_path = codex_dir / "auth_list.json"
-
     config, config_text = load_config(config_path)
     providers = config.get("model_providers")
+    active_provider = config.get("model_provider")
     if not isinstance(providers, dict) or not providers:
         fail(f"missing or empty model_providers in {config_path}")
-    active_provider = config.get("model_provider")
     if not isinstance(active_provider, str) or not active_provider:
         fail(f"missing model_provider in {config_path}")
 
-    command = argv[0]
+    try:
+        if args.list:
+            auth_list = load_json(auth_list_path, required=True)
+            for provider_name in providers:
+                marker = "*" if provider_name == active_provider else " "
+                stored = auth_list.get(provider_name)
+                has_key = "yes" if isinstance(stored, str) and stored else "no"
+                print(f"{marker} {provider_name}  key: {has_key}")
+            return 0
 
-    if command in {"-l", "--list"}:
-        auth_list = load_json(auth_list_path, required=True)
-        for provider_name in providers:
-            marker = "*" if provider_name == active_provider else " "
-            has_key = "yes" if provider_name in auth_list and isinstance(auth_list[provider_name], str) and auth_list[provider_name] else "no"
-            print(f"{marker} {provider_name}  key: {has_key}")
-        return 0
+        if args.current:
+            auth_list = load_json(auth_list_path, required=True)
+            auth = load_json(auth_path, required=False)
+            stored_key = auth_list.get(active_provider)
+            active_key = auth.get("OPENAI_API_KEY")
+            print(f"provider: {active_provider}")
+            print(
+                f"stored key: {'yes' if isinstance(stored_key, str) and stored_key else 'no'}"
+            )
+            if not isinstance(stored_key, str) or not stored_key:
+                print("auth: no stored key")
+            elif active_key == stored_key:
+                print("auth: in sync")
+            elif active_key:
+                print("auth: out of sync")
+            else:
+                print("auth: missing")
+            return 0
 
-    if command in {"-c", "--current"}:
-        auth_list = load_json(auth_list_path, required=True)
-        auth = load_json(auth_path, required=False)
-        stored_key = auth_list.get(active_provider)
-        active_key = auth.get("OPENAI_API_KEY")
-        print(f"provider: {active_provider}")
-        print(f"stored key: {'yes' if isinstance(stored_key, str) and stored_key else 'no'}")
-        if not isinstance(stored_key, str) or not stored_key:
-            print("auth: no stored key")
-        elif active_key == stored_key:
-            print("auth: in sync")
-        elif active_key:
-            print("auth: out of sync")
-        else:
-            print("auth: missing")
-        return 0
+        if args.history_backups:
+            list_history_backups(codex_dir)
+            return 0
 
-    if command in {"-s", "--switch"}:
-        target_provider = parse_provider_argument(argv, 1)
+        if args.restore_history is not None:
+            restore_history(codex_dir, args.restore_history, dry_run=args.dry_run)
+            return 0
+
+        if args.delete_history is not None:
+            delete_history_backups(codex_dir, args.delete_history, dry_run=args.dry_run)
+            return 0
+
+        if args.switch is not None:
+            validate_switch(
+                args.switch, providers=providers, auth_list_path=auth_list_path
+            )
+            if args.sync_history is not None:
+                sync_target = args.sync_history or args.switch
+                if sync_target != args.switch:
+                    fail("--switch and --sync-history must use the same provider")
+                sync_history(codex_dir, sync_target, dry_run=args.dry_run)
+                if args.dry_run:
+                    print(f"would switch to {args.switch}")
+                    return 0
+            switch_provider(
+                args.switch,
+                providers=providers,
+                auth_list_path=auth_list_path,
+                config_path=config_path,
+                config_text=config_text,
+                auth_path=auth_path,
+            )
+            return 0
+
+        target_provider = args.sync_history or active_provider
         if target_provider not in providers:
             available = ", ".join(providers.keys())
             fail(f"unknown provider '{target_provider}'. available: {available}")
-
-        auth_list = load_json(auth_list_path, required=True)
-        target_key = auth_list.get(target_provider)
-        if not isinstance(target_key, str) or not target_key:
-            fail(f"missing API key for provider '{target_provider}' in {auth_list_path}")
-
-        new_config_text = replace_model_provider(config_text, target_provider)
-        new_auth_text = json.dumps({"OPENAI_API_KEY": target_key}, indent=2) + "\n"
-        write_text_atomic(config_path, new_config_text, mode=0o600)
-        write_text_atomic(auth_path, new_auth_text, mode=0o600)
-        print(f"switched to {target_provider}")
-        print(f"updated: {config_path}")
-        print(f"updated: {auth_path}")
+        sync_history(codex_dir, target_provider, dry_run=args.dry_run)
         return 0
-
-    usage(1)
+    except HistoryError as exc:
+        fail(str(exc))
     return 1
 
 

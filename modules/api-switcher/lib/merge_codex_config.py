@@ -7,7 +7,9 @@ from pathlib import Path
 
 
 SECTION_RE = re.compile(r"^\[([^\]]+)\]\s*$")
-MODEL_PROVIDER_RE = re.compile(r'(?m)^model_provider\s*=\s*"[^"]*"\s*$')
+MODEL_PROVIDER_RE = re.compile(
+    r'(?m)^model_provider\s*=\s*"(?P<provider>[^"]*)"\s*$'
+)
 KEY_VALUE_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*=\s*(.+)\s*$")
 
 
@@ -126,6 +128,11 @@ def replace_model_provider(text: str, provider_name: str) -> str:
     return f'model_provider = "{provider_name}"\n{updated}'
 
 
+def get_model_provider(text: str) -> str:
+    match = MODEL_PROVIDER_RE.search(text)
+    return match.group("provider") if match else ""
+
+
 def insert_provider_blocks(text: str, provider_blocks: str) -> str:
     lines = text.splitlines(keepends=True)
     first_section_index = len(lines)
@@ -149,7 +156,9 @@ def main(argv: list[str]) -> int:
     provider_path = Path(argv[1])
 
     local_text = read_text(local_path)
-    provider_name, providers = load_provider_config(provider_path)
+    default_provider, providers = load_provider_config(provider_path)
+    current_provider = get_model_provider(local_text)
+    provider_name = current_provider if current_provider in providers else default_provider
 
     without_provider_sections = strip_provider_sections(local_text)
     with_provider_name = replace_model_provider(without_provider_sections, provider_name)

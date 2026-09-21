@@ -72,6 +72,7 @@ Windows installers copy both the Python script and a `.bat` launcher to `%USERPR
 - merges `templates/codex/auth_list.json` into `~/.codex/auth_list.json`
 - preserves existing API keys
 - merges helper-managed provider config from `templates/codex/config.providers.toml` into `~/.codex/config.toml`
+- preserves the active provider when it still exists in the provider template
 - preserves unrelated local Codex config, including project trust settings
 
 ## Usage
@@ -84,7 +85,37 @@ cc_api -s, --switch <provider> # switch to a provider
 codex_api -l, --list              # list available Codex providers
 codex_api -c, --current           # show active provider
 codex_api -s, --switch <provider> # switch to a provider
+
+codex_api --sync-history [provider]             # assign all history to a provider
+codex_api --sync-history [provider] --dry-run   # preview a history migration
+codex_api --switch <provider> --sync-history    # migrate history, then switch
+codex_api --history-backups                     # list migration backups
+codex_api --restore-history <backup-id>         # restore provider assignments
+codex_api --delete-history [backup-id|all]      # delete migration backups
 ```
+
+## Codex history migration
+
+Codex records a session's provider in both the session JSONL metadata and the
+SQLite thread index. `--sync-history` updates both so the normal `codex resume`
+picker and Codex clients such as the VS Code extension can see the sessions
+under the target provider. If the provider is omitted, the active provider in
+`config.toml` is used.
+
+Close Codex CLI sessions and the VS Code Codex extension before a migration.
+The command refuses to continue when it detects an active session or cannot
+acquire the SQLite write transaction.
+
+Before changing history, the tool writes a small provider-assignment manifest
+under `~/.codex/history-provider-backups/`. It does not copy conversation
+contents. `--restore-history` restores assignments from a manifest and creates
+a new manifest for the pre-restore state. `--delete-history` with no argument,
+or with `all`, deletes every manifest; it never deletes or changes a Codex
+conversation and does not undo a completed migration.
+
+History migration validates the known JSONL and SQLite fields before writing.
+Unsupported or compressed session formats cause it to stop without making a
+best-effort partial conversion.
 
 ## Manual follow-up
 
