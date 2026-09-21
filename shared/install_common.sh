@@ -48,14 +48,29 @@ set_executable() {
 }
 
 find_python() {
-    if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
-        printf 'python3\n'
-        return 0
+    local candidates=()
+    if [[ -n "${PYTHON:-}" ]]; then
+        candidates+=("${PYTHON}")
     fi
-    if command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
-        printf 'python\n'
-        return 0
+    candidates+=(python3 python)
+    # Windows: the Microsoft Store python/python3 stubs fail this probe, so
+    # also try common real interpreter locations.
+    candidates+=("${HOME}/miniconda3/python.exe" "${HOME}/anaconda3/python.exe")
+    if [[ -n "${LOCALAPPDATA:-}" ]]; then
+        candidates+=("${LOCALAPPDATA}"/Programs/Python/Python3*/python.exe)
     fi
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        # Skip unexpanded glob patterns.
+        if [[ "${candidate}" == *'*'* ]]; then
+            continue
+        fi
+        if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c 'import sys' >/dev/null 2>&1; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
     printf 'missing required Python interpreter\n' >&2
     exit 1
 }

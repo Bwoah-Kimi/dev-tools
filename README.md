@@ -48,6 +48,7 @@ bash install/install_codex_llm_wiki_skill.sh
 bash install/install_codex_shell_startup_skill.sh
 bash install/install_claude_shell_startup_skill.sh
 bash install/install_claude_vim_setup_skill.sh
+bash install/install_claude_ppt_master_skill.sh
 ```
 
 Windows native PowerShell installers are available for the API switchers:
