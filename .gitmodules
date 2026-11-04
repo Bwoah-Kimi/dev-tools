@@ -19,3 +19,6 @@
 [submodule "modules/ppt-master"]
 	path = modules/ppt-master
 	url = git@github.com:hugohe3/ppt-master.git
+[submodule "modules/openspec"]
+	path = modules/openspec
+	url = git@github.com:Fission-AI/OpenSpec.git
