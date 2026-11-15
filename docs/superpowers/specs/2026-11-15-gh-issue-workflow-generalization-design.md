@@ -10,7 +10,7 @@ Create a reusable `gh-issue-workflow` module in `dev-tools` that generalizes the
 - `gh-sync-issues`: synchronize an approved bundle to GitHub, including parent/sub-issue relationships and native blocked-by dependencies;
 - `gh-work-queue`: inspect the task queue and drive a task through implementation, validation, review, PR creation, optional merge, and closure.
 
-The generalized module must preserve the complete workflow while removing dependencies on the `sw` repository, its product, and its build environment.
+The generalized module must preserve the complete workflow while removing dependencies on the `sw` repository, its product, and its build environment. A companion `gh-workflow-init` skill adapts the generic workflow to each repository through an explicit, confirmed initialization process.
 
 ## Confirmed Decisions
 
@@ -61,6 +61,9 @@ The canonical source lives at `modules/gh-issue-workflow`:
 ```text
 modules/gh-issue-workflow/
 ├── skills/
+│   ├── gh-workflow-init/
+│   │   ├── SKILL.md
+│   │   └── scripts/
 │   ├── gh-plan-to-issues/
 │   │   ├── SKILL.md
 │   │   └── scripts/
@@ -76,6 +79,7 @@ modules/gh-issue-workflow/
 │   └── codex/
 ├── templates/
 │   ├── config.json
+│   ├── project-context.md
 │   ├── parent_issue.yml
 │   ├── sub_issue.yml
 │   └── pull_request_template.md
@@ -89,18 +93,20 @@ The root README will link to the module. A root compatibility wrapper may dispat
 
 ### Target Repository Layout
 
-Installation produces this layout in each target repository:
+Installation and initialization together produce this layout in each target repository:
 
 ```text
 <target-repo>/
 ├── .agents/
 │   ├── skills/
+│   │   ├── gh-workflow-init/
 │   │   ├── gh-plan-to-issues/
 │   │   ├── gh-sync-issues/
 │   │   ├── gh-work-queue/
 │   │   └── _shared/
 │   └── gh-issue-workflow/
-│       └── config.json
+│       ├── config.json
+│       └── project-context.md
 ├── .claude/
 │   ├── skills -> ../.agents/skills
 │   └── agents/
@@ -138,7 +144,7 @@ Existing bundle markers, including `PLAN_ROLE`, `PLAN_KEY`, `PLAN_RUN`, `PLAN_IT
 
 ## Repository Configuration
 
-Each target repository owns `.agents/gh-issue-workflow/config.json`. Configuration is versioned with the repository and is never overwritten by skill upgrades.
+Each target repository owns `.agents/gh-issue-workflow/config.json` and `.agents/gh-issue-workflow/project-context.md`. The first contains executable workflow settings; the second records project-specific constraints and documentation navigation. Both are versioned with the repository and are never overwritten by skill upgrades.
 
 ### Precedence
 
@@ -227,30 +233,58 @@ One work item continues to use one issue branch and one PR. Specification review
 
 Merge remains explicitly opt-in. The workflow must not merge while required checks or reviews fail, while unresolved non-outdated review threads remain, or while issue closure has not reached the expected state. `--admin` and equivalent bypasses are forbidden. Failures stop for user guidance rather than triggering repeated forceful mutations.
 
-## Installer and Upgrade Behavior
+## Repository Lifecycle: Install, Init, Doctor, Update
 
-The installer is invoked from `dev-tools` with an explicit target:
+Generic files and repository adaptation are separate operations. A repository is not ready for plan synchronization merely because its skills have been copied.
+
+```text
+install → init → doctor → plan/sync/work-queue → update
+```
+
+The filesystem lifecycle commands use an explicit target repository:
 
 ```bash
-bash modules/gh-issue-workflow/install/install_gh_issue_workflow.sh \
+bash modules/gh-issue-workflow/install/install_gh_issue_workflow.sh install \
+  --repo /path/to/target-repo
+bash modules/gh-issue-workflow/install/install_gh_issue_workflow.sh doctor \
+  --repo /path/to/target-repo
+bash modules/gh-issue-workflow/install/install_gh_issue_workflow.sh update \
   --repo /path/to/target-repo
 ```
 
-It supports `--dry-run` to print planned filesystem changes without applying them.
+Initialization is then performed by invoking the `gh-workflow-init` skill in the target repository. The shell installer deliberately has no semantic `init` subcommand: repository discovery, conflict resolution, and policy confirmation require the agent-led interview. Init uses the same shared configuration and validation helpers as the lifecycle commands.
 
-Installer rules:
+Every filesystem command supports `--dry-run` to show proposed local changes without applying them. The init skill provides the equivalent behavior by presenting its complete proposed writes for confirmation before changing any file.
 
-- validate that the target is a Git repository before writing;
-- copy only managed skills and generic agent definitions during installation or update;
-- create `config.json` and GitHub templates only when missing;
-- preserve existing repository configuration and customized GitHub templates;
-- make repeated installation idempotent;
-- create relative symlinks on POSIX and directory junctions on Windows for `.claude/skills` and `.codex/skills`;
-- stop with remediation instructions if compatibility links cannot be created, rather than silently creating divergent copies;
-- never run `git push`, create GitHub issues, or otherwise mutate remote state;
-- never read source files from `sw` at install time or runtime.
+### Install
 
-An update replaces only files owned by the module. Unrelated repository-local skills and agents remain untouched.
+Install validates that the target is a Git repository and copies only managed skills and generic agent definitions. It creates relative symlinks on POSIX and directory junctions on Windows for `.claude/skills` and `.codex/skills`. If compatibility links cannot be created, it stops with remediation instructions rather than silently creating divergent copies.
+
+Install does not create `config.json`, `project-context.md`, or repository GitHub templates. It is idempotent, does not modify unrelated local skills or agents, and never runs `git push` or mutates GitHub.
+
+### Init
+
+The `gh-workflow-init` skill performs repository onboarding in five stages.
+
+1. **Read-only discovery.** Inspect `AGENTS.md`, `CLAUDE.md`, README/contributing guides, build and test manifests, existing Issue and PR templates, OpenSpec files, `.agents`/`.claude`/`.codex` configuration, and documented branch/PR conventions. Detection produces proposals and evidence paths, not unquestioned facts.
+2. **User confirmation.** Confirm parent/work issue types and field mappings, specification policy, required validation commands, bundle acceptance information, branch/review/merge rules, and required project documents. Ask about uncertain or contradictory discoveries instead of guessing.
+3. **Generate repository profile.** Write `config.json` for executable settings and `project-context.md` for project constraints, required reading, protected areas, compatibility requirements, and required validation evidence. Reference existing normative documents instead of duplicating their rules.
+4. **Create or adapt templates.** Generate generic Issue/PR templates when none exist. Preserve existing templates and map their fields where possible. If required bundle fields cannot be represented, show the gaps and proposed edits; modify existing templates only after user confirmation.
+5. **Preview, confirm, and validate.** Present all proposed writes before applying them. After confirmation, write the repository profile and run local doctor checks. Initialization never creates a real issue or PR.
+
+Re-running init displays the difference between the current profile and new discovery results. Existing profile and template files are not overwritten wholesale; confirmed changes are applied as focused edits.
+
+### Doctor
+
+Doctor validates configuration syntax, field mappings, referenced documents, output paths, compatibility links, and configured validation commands. Its default mode is local and read-only. An explicit `--github` mode additionally checks authentication, repository identity, issue types, and required native APIs using read-only requests. It never creates or modifies GitHub data.
+
+Doctor can be run independently after repository conventions change. Work-queue preflight uses the same validation component so initialization and daily execution cannot drift into different rule sets.
+
+### Update
+
+Update replaces only module-owned skills, scripts, and generic agents. It preserves `config.json`, `project-context.md`, customized GitHub templates, and unrelated repository-local files. Repeated updates are idempotent. If a new generic version requires configuration changes, update reports the required migration and stops until the user confirms it; it does not silently rewrite repository policy.
+
+No lifecycle command reads source files from `sw`, pushes commits, or mutates remote GitHub state.
 
 ## Dry-Run and Side-Effect Semantics
 
@@ -278,11 +312,14 @@ Add focused coverage for:
 5. dry-run absence of remote and persistent local side effects;
 6. rejection of missing, stale, or altered approved bundles;
 7. repository-root path resolution from arbitrary subdirectories;
-8. installation, idempotent update, configuration preservation, and dry-run in temporary repositories;
-9. explicit failure when required compatibility links cannot be created;
-10. synchronization and dependency reconciliation against a mock `gh` executable;
-11. queue readiness and PR rendering using configured issue types and templates;
-12. installer refusal of a non-Git target and attempts to overwrite existing configuration.
+8. installation, idempotent update, profile preservation, and dry-run in temporary repositories;
+9. init discovery, confirmed generation of `config.json` and `project-context.md`, and preservation of existing normative documents;
+10. init adaptation of existing Issue/PR templates without unconfirmed overwrites;
+11. local and `--github` doctor checks remaining read-only;
+12. explicit failure when required compatibility links cannot be created;
+13. synchronization and dependency reconciliation against a mock `gh` executable;
+14. queue readiness and PR rendering using configured issue types and templates;
+15. installer refusal of a non-Git target and update attempts that would overwrite repository policy.
 
 Tests do not contact `sw` or real GitHub services. Filesystem fixtures use temporary Git repositories.
 
@@ -292,7 +329,7 @@ Live GitHub integration is opt-in and separate from the normal suite. It require
 
 ### Documentation
 
-The module README documents prerequisites, installation, configuration, specification policies, update behavior, and uninstall guidance. Module documentation also covers the bundle/approval contract, run-state layout, field mappings, dry-run guarantees, and troubleshooting.
+The module README documents prerequisites, the install/init/doctor/update lifecycle, repository profiles, specification policies, update behavior, and uninstall guidance. Module documentation also covers initialization interviews and evidence paths, the bundle/approval contract, run-state layout, field mappings, dry-run guarantees, and troubleshooting.
 
 The root README lists the module and its installer without duplicating the full guide.
 
@@ -300,9 +337,10 @@ The root README lists the module and its installer without duplicating the full 
 
 The first version is complete when all offline tests pass and two isolated fixture repositories demonstrate the following without reading `sw` scripts or changing real GitHub data:
 
-- a repository with `spec_policy: none` completes install, plan validation, bundle rendering, dry-run sync rendering, mock synchronization, queue readiness, and PR body rendering without `spec_impact`;
+- a repository with `spec_policy: none` completes install, confirmed init, local doctor, plan validation, bundle rendering, dry-run sync rendering, mock synchronization, queue readiness, and PR body rendering without `spec_impact`;
 - a repository with `spec_policy: openspec` completes the same flow with required OpenSpec impacts and strict local specification validation;
-- both installations preserve repository-local configuration on upgrade;
+- each initialized repository has a reviewed `config.json` and `project-context.md` that reference existing normative documents rather than duplicating them;
+- both installations preserve repository-local profiles and customized templates on update;
 - repository context, generated state, and cache files remain isolated between the two fixtures;
 - no test or installation step pushes commits or mutates a real GitHub repository.
 
