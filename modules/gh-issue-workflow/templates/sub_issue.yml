@@ -1,0 +1,98 @@
+name: Sub-issue
+description: Executable work item created from a plan bundle.
+title: "[Sub] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repo uses `gh-plan-to-issues`, `gh-sync-issues`, and `gh-work-queue` (issues-only) to manage work.
+        Queue membership is Issue Type = `Task` (synced sub-issues are set automatically).
+        Dependencies are enforced via GitHub-native **Blocked by** links; keep the `Dependencies` field below as issue refs like `#123`.
+        Plan coverage is tracked using **Plan Atoms**:
+        - The parent issue defines an atom registry (`A1`, `A2`, ...).
+        - Each sub-issue explicitly lists the atoms it owns and acceptance checks that reference those atom IDs.
+        If you create issues manually, set Issue Type = `Task` so it appears in the queue.
+
+  - type: textarea
+    id: intent_and_contract
+    attributes:
+      label: Intent and Contract
+      description: "State the intended observable behavior, key constraints, and preserved invariants completely enough that implementation does not silently choose a new contract. Include IR/ABI and other cross-component contracts when applicable."
+    validations:
+      required: true
+
+  - type: textarea
+    id: owned_atoms
+    attributes:
+      label: Owned Plan Atoms
+      description: "Bullet list of Plan Atoms owned by this issue. Each bullet must start with an atom ID like `A3:` and briefly justify ownership."
+    validations:
+      required: true
+
+  - type: textarea
+    id: spec_impact
+    attributes:
+      label: Expected Spec Impact
+      description: "Explain which behavior contracts are likely to need reconciliation after implementation, and list the likely canonical `openspec/specs/**/spec.md` paths. Do not pre-author exact requirement deltas. Use `(none; <reason>)` only when the Task should preserve all canonical behavior."
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation_plan
+    attributes:
+      label: Implementation Plan (Implementation-Ready)
+      description: "Implementation-ready approach: key files/interfaces, data flow, edge cases, error handling, migration/compat notes, and bounded choices the implementer may resolve. Avoid vague phrases; be explicit enough to assess feasibility and interactions before execution."
+    validations:
+      required: true
+
+  - type: textarea
+    id: file_and_interface_scope
+    attributes:
+      label: File and Interface Scope
+      description: "Explicit in-scope/out-of-scope plus concrete repo paths/interfaces expected to change. Include discovery commands if listing is not known."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_checks
+    attributes:
+      label: Acceptance Checks
+      description: "Observable pass/fail outcomes. Each bullet MUST reference one or more atom IDs like `[A3]` so coverage is auditable."
+    validations:
+      required: true
+
+  - type: textarea
+    id: assumptions_defaults
+    attributes:
+      label: Assumptions / Defaults
+      description: "Assumptions the implementation relies on, and defaults chosen where the spec/plan permits multiple options. Use `(none)` if not applicable."
+      value: "(none)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: "Repo-relative spec/doc references reviewers should read. Use `(none)` when not applicable."
+      value: "(none)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: handoff_contract
+    attributes:
+      label: Handoff Contract
+      description: "Upstream inputs required (from dependencies) and downstream guarantees produced by this issue. Use `(none)` when not applicable."
+      value: "(none)"
+    validations:
+      required: false
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: "Dependency links only. Use issue refs like `#123`. (Bundle tokens like `S2` are only valid inside plan bundles.) Use `(none)` when no dependency."
+      value: "(none)"
+    validations:
+      required: false

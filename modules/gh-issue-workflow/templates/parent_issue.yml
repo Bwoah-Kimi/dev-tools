@@ -1,0 +1,55 @@
+name: Plan tracker (parent)
+description: Tracks a plan run and links its executable sub-issues.
+title: "[Plan] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tracker issue created from a validated plan bundle by `gh-sync-issues`.
+        Issue Type is `Feature` (set automatically by the sync script).
+        Do not put executable tasks here; use sub-issues.
+        Coverage is tracked using **Plan Atoms**:
+        - Atom Registry defines `A1`, `A2`, ... as single-intent, checkable requirements.
+        - Coverage Matrix maps each atom to owning sub-issue(s).
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: "High-level goal for the plan/run."
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: "Bullet list describing what is in/out of scope for this plan."
+      value: "- (none)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: assumptions
+    attributes:
+      label: Assumptions
+      description: "Bullet list of assumptions that the plan relies on."
+      value: "- (none)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: atom_registry
+    attributes:
+      label: Atom Registry
+      description: "Canonical list of Plan Atoms. Each bullet must start with an atom ID like `A1:` and contain a single-intent, independently checkable requirement."
+    validations:
+      required: true
+
+  - type: textarea
+    id: coverage_matrix
+    attributes:
+      label: Coverage Matrix
+      description: "Map each atom ID to owning sub-issue(s). Format example: `- A1 -> #123`."
+    validations:
+      required: true
