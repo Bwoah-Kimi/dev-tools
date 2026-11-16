@@ -30,6 +30,7 @@ from issue_bundle import (
 from issue_form import (
     IssueFormError,
     load_issue_form,
+    mapped_field_ids,
     render_sub_issue_body,
     require_field_ids,
 )
@@ -52,6 +53,9 @@ REQUIRED_SUB_ISSUE_FORM_IDS = {
     "references",
     "handoff_contract",
     "dependencies",
+}
+DEFAULT_FIELD_MAPPING = {
+    "work": {field: field for field in REQUIRED_SUB_ISSUE_FORM_IDS}
 }
 
 
@@ -134,6 +138,7 @@ def _sync_items(
     existing_items: dict[str, dict[str, Any]],
     state: dict[str, Any],
     sync_state_path: Path | None,
+    field_mapping: dict | None,
 ) -> list[SyncedItem]:
     synced: list[SyncedItem] = []
     for item in items:
@@ -154,6 +159,7 @@ def _sync_items(
                     run_id=effective_run_id,
                     item_id=item.id,
                 ),
+                field_mapping=field_mapping,
             )
             summary = issue_client.create_issue(item.title, body)
             if sync_state_path:
@@ -182,6 +188,7 @@ def _reconcile_dependencies(
     issue_client: GitHubIssueClient,
     effective_plan_key: str,
     effective_run_id: str,
+    field_mapping: dict | None,
 ) -> None:
     id_to_issue = {row.item.id: row.summary.number for row in synced}
     id_by_issue_number = {row.summary.number: row.summary.id for row in synced}
@@ -205,6 +212,7 @@ def _reconcile_dependencies(
                 run_id=effective_run_id,
                 item_id=row.item.id,
             ),
+            field_mapping=field_mapping,
         )
         row.summary = issue_client.edit_issue(row.summary.number, row.item.title, updated_body)
         dep_numbers = [
@@ -233,13 +241,17 @@ def sync_bundle(
     run_id: str | None,
     sync_state_path: Path | None,
     dry_run: bool,
+    spec_mode: str = "openspec",
+    field_mapping: dict | None = None,
+    work_issue_type: str = "Task",
 ) -> dict[str, Any]:
     if not bundle_path.exists():
         raise SyncError(f"Bundle file not found: {bundle_path}")
+    effective_mapping = field_mapping if field_mapping is not None else DEFAULT_FIELD_MAPPING
     if not issue_template.exists():
         raise SyncError(f"Issue template not found: {issue_template}")
 
-    _, items, raw_payload = load_issue_bundle(bundle_path)
+    _, items, raw_payload = load_issue_bundle(bundle_path, spec_mode=spec_mode)
     bundle_sha = bundle_sha256(raw_payload)
     _validate_unique_change_ids(items=items)
 
@@ -259,7 +271,10 @@ def sync_bundle(
 
     try:
         form = load_issue_form(issue_template)
-        require_field_ids(form=form, required=REQUIRED_SUB_ISSUE_FORM_IDS)
+        require_field_ids(
+            form=form,
+            required=mapped_field_ids(effective_mapping, "work", spec_mode),
+        )
     except IssueFormError as exc:
         raise SyncError(str(exc)) from exc
 
@@ -277,6 +292,7 @@ def sync_bundle(
                     run_id=effective_run_id,
                     item_id=item.id,
                 ),
+                field_mapping=effective_mapping,
             )
             preview.append(
                 {
@@ -310,7 +326,7 @@ def sync_bundle(
     task_issue_type_id = require_issue_type_id(
         owner=repo_owner,
         name=repo_name,
-        issue_type_name="Task",
+        issue_type_name=work_issue_type,
     )
 
     if sync_state_path:
@@ -334,6 +350,7 @@ def sync_bundle(
         existing_items=existing_items,
         state=state,
         sync_state_path=sync_state_path,
+        field_mapping=effective_mapping,
     )
 
     _reconcile_dependencies(
@@ -342,6 +359,7 @@ def sync_bundle(
         issue_client=issue_client,
         effective_plan_key=effective_plan_key,
         effective_run_id=effective_run_id,
+        field_mapping=effective_mapping,
     )
 
     result: dict[str, Any] = {

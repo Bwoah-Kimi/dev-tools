@@ -94,6 +94,21 @@ def load_issue_form(path: Path) -> IssueForm:
     return IssueForm(path=path, name=name, fields=fields)
 
 
+def mapped_field_ids(mapping: dict, role: str, spec_mode: str) -> set[str]:
+    fields = dict(mapping.get(role, {}))
+    if spec_mode == "none":
+        fields.pop("spec_impact", None)
+    return {value for value in fields.values() if isinstance(value, str) and value}
+
+
+def mapped_field_id(mapping: dict | None, role: str, logical_name: str) -> str:
+    mapping = mapping or {}
+    value = mapping.get(role, {}).get(logical_name, logical_name)
+    if not isinstance(value, str) or not value:
+        raise IssueFormError(f"Invalid {role}.{logical_name} field mapping: {value!r}")
+    return value
+
+
 def require_field_ids(*, form: IssueForm, required: set[str]) -> None:
     present = {field.id for field in form.fields}
     missing = sorted(required - present)
@@ -124,12 +139,19 @@ def _render_spec_impact(impact: SpecImpact) -> str:
 
 def render_sub_issue_body(
     *,
-    form: IssueForm,
+    form: IssueForm | None = None,
+    form_path: Path | None = None,
     change_id: str,
     item: WorkItem,
     dependencies_text: str,
     prefix_lines: list[str] | None = None,
+    field_mapping: dict | None = None,
 ) -> str:
+    if form is None:
+        if form_path is None:
+            raise IssueFormError("render_sub_issue_body requires form or form_path")
+        form = load_issue_form(form_path)
+
     prefix: list[str] = []
     if prefix_lines:
         prefix.extend([line.rstrip() for line in prefix_lines if line.strip()])
@@ -142,6 +164,10 @@ def render_sub_issue_body(
 
     labels = {field.id: field.label for field in form.fields}
 
+    def label(logical_name: str, default: str) -> str:
+        field_id = mapped_field_id(field_mapping, "work", logical_name)
+        return labels.get(field_id, default)
+
     change_title = _strip_issue_title_prefix(item.title) or item.id
     deps = dependencies_text.strip() or "(none)"
 
@@ -149,65 +175,72 @@ def render_sub_issue_body(
         f"## Change: {change_title}",
         "\n".join(
             [
-                f"## {labels.get('intent_and_contract', 'Intent and Contract')}",
+                f"## {label('intent_and_contract', 'Intent and Contract')}",
                 item.intent_and_contract.strip(),
             ]
         ),
         "\n".join(
             [
-                f"## {labels.get('owned_atoms', 'Owned Plan Atoms')}",
+                f"## {label('owned_atoms', 'Owned Plan Atoms')}",
                 _bullets(item.owned_atoms),
             ]
         ),
-        "\n".join(
-            [
-                f"## {labels.get('spec_impact', 'Expected Spec Impact')}",
-                _render_spec_impact(item.spec_impact),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('implementation_plan', 'Implementation Plan')}",
-                item.implementation_plan.strip(),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('file_and_interface_scope', 'File and Interface Scope')}",
-                item.file_and_interface_scope.strip(),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('acceptance_checks', 'Acceptance Checks')}",
-                _bullets(item.acceptance_checks),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('assumptions_defaults', 'Assumptions / Defaults')}",
-                item.assumptions_defaults.strip(),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('references', 'References')}",
-                _optional_bullets(item.references),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('handoff_contract', 'Handoff Contract')}",
-                item.handoff_contract.strip(),
-            ]
-        ),
-        "\n".join(
-            [
-                f"## {labels.get('dependencies', 'Dependencies')}",
-                deps,
-            ]
-        ),
     ]
+    if item.spec_impact is not None:
+        sections.append(
+            "\n".join(
+                [
+                    f"## {label('spec_impact', 'Expected Spec Impact')}",
+                    _render_spec_impact(item.spec_impact),
+                ]
+            )
+        )
+    sections.extend(
+        [
+            "\n".join(
+                [
+                    f"## {label('implementation_plan', 'Implementation Plan')}",
+                    item.implementation_plan.strip(),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('file_and_interface_scope', 'File and Interface Scope')}",
+                    item.file_and_interface_scope.strip(),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('acceptance_checks', 'Acceptance Checks')}",
+                    _bullets(item.acceptance_checks),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('assumptions_defaults', 'Assumptions / Defaults')}",
+                    item.assumptions_defaults.strip(),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('references', 'References')}",
+                    _optional_bullets(item.references),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('handoff_contract', 'Handoff Contract')}",
+                    item.handoff_contract.strip(),
+                ]
+            ),
+            "\n".join(
+                [
+                    f"## {label('dependencies', 'Dependencies')}",
+                    deps,
+                ]
+            ),
+        ]
+    )
 
     prefix_text = "\n".join(prefix).strip()
     sections_text = "\n\n".join(sections).strip()
@@ -231,6 +264,7 @@ def render_parent_body(
     source_plan_sha256: str,
     child_issue_numbers: list[int],
     planned_child_ids: list[str] | None = None,
+    field_mapping: dict | None = None,
 ) -> str:
     prefix = "\n".join(
         [
@@ -243,18 +277,18 @@ def render_parent_body(
 
     sections: list[str] = []
     for field in form.fields:
-        if field.id == "objective":
+        if field.id == mapped_field_id(field_mapping, "parent", "objective"):
             sections.append(f"## {field.label}\n{objective.strip() or '(none)'}")
-        elif field.id == "scope":
+        elif field.id == mapped_field_id(field_mapping, "parent", "scope"):
             scope_text = _bullets(scope) if scope else "- (none)"
             sections.append(f"## {field.label}\n{scope_text}")
-        elif field.id == "assumptions":
+        elif field.id == mapped_field_id(field_mapping, "parent", "assumptions"):
             assumptions_text = _bullets(assumptions) if assumptions else "- (none)"
             sections.append(f"## {field.label}\n{assumptions_text}")
-        elif field.id == "atom_registry":
+        elif field.id == mapped_field_id(field_mapping, "parent", "atom_registry"):
             atoms_text = _bullets(atom_registry) if atom_registry else "- (none)"
             sections.append(f"## {field.label}\n{atoms_text}")
-        elif field.id == "coverage_matrix":
+        elif field.id == mapped_field_id(field_mapping, "parent", "coverage_matrix"):
             coverage_text = _bullets(coverage_matrix) if coverage_matrix else "- (none)"
             sections.append(f"## {field.label}\n{coverage_text}")
         else:
