@@ -2,7 +2,7 @@
 - Implements issue #{{ISSUE_NUMBER}}
 
 ## Linkage
-Fixes #{{ISSUE_NUMBER}}
+{{CLOSE_KEYWORD}} #{{ISSUE_NUMBER}}
 
 ## Spec Reconciliation
 Canonical behavior specs changed:

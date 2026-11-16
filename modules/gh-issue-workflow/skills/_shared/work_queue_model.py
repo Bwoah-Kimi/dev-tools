@@ -189,6 +189,7 @@ def list_open_task_issues(
     owner: str,
     name: str,
     limit: int | None = None,
+    work_issue_type: str = "Task",
 ) -> list[QueueIssue]:
     issues: list[QueueIssue] = []
     cursor: str | None = None
@@ -210,7 +211,7 @@ def list_open_task_issues(
             if not isinstance(raw, dict):
                 continue
             issue = _parse_issue(raw)
-            if issue.issue_type != "Task":
+            if issue.issue_type != work_issue_type:
                 continue
             issues.append(issue)
             if limit is not None and len(issues) >= limit:
@@ -294,12 +295,14 @@ def render_pr_body(
     issue: QueueIssue,
     specs_changed: str,
     tests_run: str,
+    close_keyword: str = "Fixes",
 ) -> str:
     if not template_path.exists():
         return ""
     template = template_path.read_text(encoding="utf-8")
     return (
-        template.replace("{{ISSUE_NUMBER}}", str(issue.issue_number))
+        template.replace("{{CLOSE_KEYWORD}}", close_keyword)
+        .replace("{{ISSUE_NUMBER}}", str(issue.issue_number))
         .replace("{{SPECS_CHANGED}}", specs_changed or "<fill>")
         .replace("{{TESTS_RUN}}", tests_run or "<fill>")
     )

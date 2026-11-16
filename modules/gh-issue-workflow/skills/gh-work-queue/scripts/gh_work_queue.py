@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
 from gh_cli import GhCliError
 from gh_context import resolve_context
 from paths import SETUP_HINT
+from workflow_config import ConfigError, load_config
 from work_queue_model import (
     WorkQueueError,
     fetch_issue,
@@ -61,6 +62,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         owner=args.repo_owner,
         name=args.repo_name,
         limit=args.limit,
+        work_issue_type=getattr(args, "work_issue_type", "Task"),
     )
     issues = filter_issues(issues=issues, ready=args.ready)
     if args.format == "json":
@@ -75,6 +77,7 @@ def _cmd_next(args: argparse.Namespace) -> int:
         owner=args.repo_owner,
         name=args.repo_name,
         limit=args.limit,
+        work_issue_type=getattr(args, "work_issue_type", "Task"),
     )
     issues = filter_issues(issues=issues, ready=args.ready)
     issues = [issue for issue in issues if not is_in_progress(issue)]
@@ -102,8 +105,9 @@ def _cmd_next(args: argparse.Namespace) -> int:
 
 def _cmd_show(args: argparse.Namespace) -> int:
     issue = fetch_issue(owner=args.repo_owner, name=args.repo_name, number=args.issue)
-    if issue.issue_type != "Task":
-        raise WorkQueueError(f"Issue #{issue.issue_number} is not a Task issue")
+    expected_type = getattr(args, "expected_issue_type", "Task")
+    if issue.issue_type != expected_type:
+        raise WorkQueueError(f"Issue #{issue.issue_number} is not a {expected_type} issue")
     if args.format == "json":
         issue = replace(
             issue,
@@ -130,6 +134,7 @@ def _cmd_pr_body(args: argparse.Namespace) -> int:
         issue=issue,
         specs_changed=args.specs_changed,
         tests_run=args.tests_run,
+        close_keyword=getattr(args, "close_keyword", "Fixes"),
     )
     if not body:
         print("ERROR: PR template not found or empty.", file=sys.stderr)
@@ -153,8 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--limit",
             type=int,
             default=None,
-            help="Max number of Task issues to fetch (best-effort).",
+            help="Max number of work issues to fetch (best-effort).",
         )
+        target.add_argument("--config", type=Path, default=None)
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -182,7 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pr.add_argument(
         "--pr-template",
         type=Path,
-        default=Path(".github/pull_request_template.md"),
+        default=None,
         help="PR template path.",
     )
     p_pr.add_argument("--specs-changed", default="", help="Value for {{SPECS_CHANGED}}.")
@@ -195,8 +201,21 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        context = resolve_context(repo=args.repo)
-    except GhCliError as exc:
+        config = load_config(Path.cwd(), config_path=args.config)
+        pr_policy = config.data["pr_policy"]
+        if pr_policy.get("allow_admin") or pr_policy.get("merge") != "opt-in":
+            raise WorkQueueError("pr_policy must forbid admin bypass and keep merge opt-in")
+        context = resolve_context(
+            repo=args.repo,
+            repo_root=config.repo_root,
+            context_path=config.output_path("cache") / "context.json",
+        )
+        args.work_issue_type = config.work_issue_type
+        args.expected_issue_type = config.work_issue_type
+        args.close_keyword = pr_policy["close_keyword"]
+        if getattr(args, "pr_template", None) is None:
+            args.pr_template = config.template_path("pr")
+    except (GhCliError, ConfigError, WorkQueueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         print(SETUP_HINT, file=sys.stderr)
         return 1
