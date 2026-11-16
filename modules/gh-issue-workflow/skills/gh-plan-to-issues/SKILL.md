@@ -87,7 +87,7 @@ GitHub issues are the reviewed proposal output. The work queue does not create a
 - [ ] Dispatch the `gh-bundle-reviewer` subagent with the packet. Its tool-native definition (`.codex/agents/gh-bundle-reviewer.toml` / `.claude/agents/gh-bundle-reviewer.md`) owns model selection; do not inherit the root session's model by accident.
   - [ ] Bundle-structure or missing-atom problems → fix here, re-validate + re-render, then re-dispatch.
   - [ ] Re-dispatch until the reviewer approves the current revision. If the harness cannot dispatch subagents, stop and surface that limitation.
-- [ ] On approval, pin the approved revision for the sync guard: `cp /path/to/bundle.json <bundle dir>/review/approved-bundle.json`.
+- [ ] On approval, pin the approved revision for the sync guard: `python3 .agents/skills/_shared/approval.py write --bundle /path/to/bundle.json --approved-bundle "<bundle dir>/review/approved-bundle.json" --spec-mode <configured-mode>`. This records the canonical bundle hash and specification policy.
 - [ ] Hand off to `gh-sync-issues` for **live sync only**: pass the plan path, the bundle path, and `<bundle dir>/review/approved-bundle.json`. Do not claim GitHub issues exist yet.
 
 ## JSON Bundle Schema

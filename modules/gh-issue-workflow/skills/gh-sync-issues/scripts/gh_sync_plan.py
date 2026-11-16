@@ -11,6 +11,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
 
 from atom_ids import atom_id_from_line  # noqa: E402
+from approval import ApprovalError, load_approved_bundle  # noqa: E402
 from file_archive import (  # noqa: E402
     FileArchiveError,
     archive_file,
@@ -342,7 +343,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview only; do not create/close issues.",
+        help="Preview only; do not create/close issues or write local state.",
+    )
+    parser.add_argument(
+        "--approved-bundle",
+        type=Path,
+        default=None,
+        help="Reviewed approval metadata; required for a live sync.",
     )
     parser.add_argument(
         "--format",
@@ -351,6 +358,15 @@ def _parse_args() -> argparse.Namespace:
         help="Output format.",
     )
     return parser.parse_args()
+
+
+def _workflow_config(args: argparse.Namespace):
+    overrides: dict[str, Any] = {}
+    if args.spec_mode:
+        overrides["spec_policy"] = {"mode": args.spec_mode}
+    if args.spec_root:
+        overrides.setdefault("spec_policy", {})["roots"] = args.spec_root
+    return load_config(Path.cwd(), overrides, config_path=args.config)
 
 
 def _prepare_run(args: argparse.Namespace, *, persist: bool) -> tuple[
@@ -369,12 +385,7 @@ def _prepare_run(args: argparse.Namespace, *, persist: bool) -> tuple[
     IssueForm,  # parent_form
 ]:
     try:
-        overrides: dict[str, Any] = {}
-        if args.spec_mode:
-            overrides["spec_policy"] = {"mode": args.spec_mode}
-        if args.spec_root:
-            overrides.setdefault("spec_policy", {})["roots"] = args.spec_root
-        config = load_config(Path.cwd(), overrides, config_path=args.config)
+        config = _workflow_config(args)
         args.workflow_config = config
         args.spec_mode = config.spec_mode
         args.issue_template = args.issue_template or config.template_path("work")
@@ -763,6 +774,18 @@ def _sync_new_run(
 
 def main() -> int:
     args = _parse_args()
+
+    if not args.dry_run:
+        if args.approved_bundle is None:
+            print("ERROR: --approved-bundle is required for a live sync", file=sys.stderr)
+            return 1
+        try:
+            config = _workflow_config(args)
+            current_bundle = _safe_load_json(args.bundle)
+            load_approved_bundle(args.approved_bundle, current_bundle, config.spec_mode)
+        except (ApprovalError, ConfigError, PlanSyncError) as exc:
+            print(f"ERROR: approval verification failed: {exc}", file=sys.stderr)
+            return 1
 
     (
         context, plan_key, plan_dir, run_id, plan_sha, bundle_hash,
