@@ -37,11 +37,13 @@ from issue_form import (  # noqa: E402
     IssueForm,
     IssueFormError,
     load_issue_form,
+    mapped_field_ids,
     render_parent_body,
     require_field_ids,
 )
 from json_io import JsonIOError, load_json, write_json  # noqa: E402
 from paths import SETUP_HINT, sanitize_component  # noqa: E402
+from workflow_config import ConfigError, load_config  # noqa: E402
 
 
 class PlanSyncError(RuntimeError):
@@ -133,6 +135,7 @@ def _ensure_parent_issue(
     source_plan_path: str,
     source_plan_sha256: str,
     child_issue_numbers: list[int],
+    field_mapping: dict | None = None,
 ) -> dict[str, Any]:
     parent_change_id = f"{PARENT_CHANGE_ID_PREFIX}-{plan_key}"
     body = render_parent_body(
@@ -148,6 +151,7 @@ def _ensure_parent_issue(
         source_plan_path=source_plan_path,
         source_plan_sha256=source_plan_sha256,
         child_issue_numbers=child_issue_numbers,
+        field_mapping=field_mapping,
     )
     summary = issue_client.upsert_by_change_id(
         change_id=parent_change_id,
@@ -312,15 +316,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--issue-template",
         type=Path,
-        default=Path(".github/ISSUE_TEMPLATE/sub_issue.yml"),
-        help="GitHub issue form YAML template path for sub-issues.",
+        default=None,
+        help="GitHub issue form YAML template path for work issues.",
     )
     parser.add_argument(
         "--parent-template",
         type=Path,
-        default=Path(".github/ISSUE_TEMPLATE/parent_issue.yml"),
+        default=None,
         help="GitHub issue form YAML template path for parent issues.",
     )
+    parser.add_argument("--config", type=Path, default=None, help="Repository workflow config.")
+    parser.add_argument(
+        "--spec-mode", choices=("openspec", "optional", "none"), default=None
+    )
+    parser.add_argument("--spec-root", action="append", default=[])
+    parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument(
         "--force-new-run",
         action="store_true",
@@ -343,7 +353,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _prepare_run(args: argparse.Namespace) -> tuple[
+def _prepare_run(args: argparse.Namespace, *, persist: bool) -> tuple[
     Any,  # context
     str,  # plan_key
     Path,  # plan_dir
@@ -359,8 +369,23 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
     IssueForm,  # parent_form
 ]:
     try:
-        context = resolve_context(repo=args.repo)
-    except GhCliError as exc:
+        overrides: dict[str, Any] = {}
+        if args.spec_mode:
+            overrides["spec_policy"] = {"mode": args.spec_mode}
+        if args.spec_root:
+            overrides.setdefault("spec_policy", {})["roots"] = args.spec_root
+        config = load_config(Path.cwd(), overrides, config_path=args.config)
+        args.workflow_config = config
+        args.spec_mode = config.spec_mode
+        args.issue_template = args.issue_template or config.template_path("work")
+        args.parent_template = args.parent_template or config.template_path("parent")
+        context = resolve_context(
+            repo=args.repo,
+            repo_root=config.repo_root,
+            context_path=config.output_path("cache") / "context.json",
+            write_cache=persist,
+        )
+    except (ConfigError, GhCliError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         print(SETUP_HINT, file=sys.stderr)
         raise SystemExit(1) from exc
@@ -377,7 +402,10 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
         print("ERROR: could not derive a valid plan_key", file=sys.stderr)
         raise SystemExit(1)
 
-    plan_dir = OUT_ROOT / plan_key
+    output_root = args.output_root or config.output_path("plan")
+    if not output_root.is_absolute():
+        output_root = config.repo_root / output_root
+    plan_dir = output_root / plan_key
 
     bundle_payload = _safe_load_json(args.bundle)
 
@@ -398,32 +426,34 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
     bundle_out_path, sync_out_path = _sync_paths(plan_dir, run_id)
     run_dir = bundle_out_path.parent
 
+    if persist:
+        try:
+            archive_file(
+                source_path=args.plan,
+                dest_path=run_dir / "plan.md",
+                expected_sha256=plan_sha,
+            )
+        except (OSError, FileArchiveError) as exc:
+            print(
+                f"ERROR: failed to archive plan file to {run_dir / 'plan.md'}: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
+
+        source_plan = bundle_payload.get("source_plan")
+        if not isinstance(source_plan, dict):
+            source_plan = {}
+            bundle_payload["source_plan"] = source_plan
+        source_plan.setdefault("path", str(args.plan))
+        source_plan.setdefault("sha256", plan_sha)
+        source_plan.setdefault("bundle_input_path", str(args.bundle))
+        source_plan["archived_path"] = str(run_dir / "plan.md")
+        write_json(bundle_out_path, bundle_payload)
+    else:
+        bundle_out_path = args.bundle
+
     try:
-        archive_file(
-            source_path=args.plan,
-            dest_path=run_dir / "plan.md",
-            expected_sha256=plan_sha,
-        )
-    except (OSError, FileArchiveError) as exc:
-        print(
-            f"ERROR: failed to archive plan file to {run_dir / 'plan.md'}: {exc}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1) from exc
-
-    source_plan = bundle_payload.get("source_plan")
-    if not isinstance(source_plan, dict):
-        source_plan = {}
-        bundle_payload["source_plan"] = source_plan
-    source_plan.setdefault("path", str(args.plan))
-    source_plan.setdefault("sha256", plan_sha)
-    source_plan.setdefault("bundle_input_path", str(args.bundle))
-    source_plan["archived_path"] = str(run_dir / "plan.md")
-
-    write_json(bundle_out_path, bundle_payload)
-
-    try:
-        parent, items, _ = load_issue_bundle(bundle_out_path)
+        parent, items, _ = load_issue_bundle(bundle_out_path, spec_mode=config.spec_mode)
     except IssueBundleError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -436,7 +466,7 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
         feature_issue_type_id = require_issue_type_id(
             owner=context.repo_owner,
             name=context.repo_name,
-            issue_type_name="Feature",
+            issue_type_name=config.parent_issue_type,
         )
     except GhCliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -445,7 +475,10 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
 
     try:
         parent_form = load_issue_form(args.parent_template)
-        require_field_ids(form=parent_form, required=REQUIRED_PARENT_FORM_IDS)
+        require_field_ids(
+            form=parent_form,
+            required=mapped_field_ids(config.data["fields"], "parent", config.spec_mode),
+        )
     except IssueFormError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -493,6 +526,7 @@ def _handle_dry_run(
         source_plan_sha256=plan_sha,
         child_issue_numbers=[],
         planned_child_ids=[item.id for item in items],
+        field_mapping=args.workflow_config.data["fields"],
     )
     try:
         result = sync_bundle(
@@ -505,6 +539,10 @@ def _handle_dry_run(
             run_id=run_id,
             sync_state_path=None,
             dry_run=True,
+            spec_mode=args.workflow_config.spec_mode,
+            field_mapping=args.workflow_config.data["fields"],
+            work_issue_type=args.workflow_config.work_issue_type,
+            github_host=context.host,
         )
     except GhCliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -560,6 +598,7 @@ def _handle_existing_run(
             source_plan_path=str(args.plan),
             source_plan_sha256=plan_sha,
             child_issue_numbers=children,
+            field_mapping=args.workflow_config.data["fields"],
         )
         _reconcile_sub_issues(
             repo=context.repo,
@@ -622,6 +661,10 @@ def _sync_new_run(
             run_id=run_id,
             sync_state_path=sync_out_path,
             dry_run=False,
+            spec_mode=args.workflow_config.spec_mode,
+            field_mapping=args.workflow_config.data["fields"],
+            work_issue_type=args.workflow_config.work_issue_type,
+            github_host=context.host,
         )
     except GhCliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -725,7 +768,7 @@ def main() -> int:
         context, plan_key, plan_dir, run_id, plan_sha, bundle_hash,
         bundle_out_path, sync_out_path, parent, items,
         issue_client, feature_issue_type_id, parent_form,
-    ) = _prepare_run(args)
+    ) = _prepare_run(args, persist=not args.dry_run)
 
     if args.dry_run:
         return _handle_dry_run(

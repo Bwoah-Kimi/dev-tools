@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from typing import Any
 
@@ -16,8 +17,10 @@ def run(
     expect_json: bool = False,
     input_text: str | None = None,
 ) -> Any:
+    executable = shutil.which(args[0])
+    command = [executable or args[0], *args[1:]]
     proc = subprocess.run(
-        args,
+        command,
         text=True,
         input=input_text,
         capture_output=True,
