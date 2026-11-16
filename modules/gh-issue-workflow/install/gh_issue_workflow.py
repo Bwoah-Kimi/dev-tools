@@ -11,6 +11,9 @@ import sys
 from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(MODULE_ROOT / "skills" / "_shared"))
+from workflow_doctor import run_doctor
+
 MANAGED_SKILLS = (
     "gh-workflow-init", "gh-plan-to-issues", "gh-sync-issues", "gh-work-queue", "_shared",
 )
@@ -146,11 +149,16 @@ def run_filesystem_action(repo: Path, action: str, dry_run: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install or update GitHub Issue workflow skills")
-    parser.add_argument("action", choices=("install", "update"))
+    parser.add_argument("action", choices=("install", "update", "doctor"))
     parser.add_argument("--repo", required=True, type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--github", action="store_true")
     args = parser.parse_args()
     try:
+        if args.action == "doctor":
+            report = run_doctor(args.repo, args.github)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["ok"] else 1
         run_filesystem_action(args.repo, args.action, args.dry_run)
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
