@@ -11,6 +11,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
 
 from gh_cli import GhCliError
+from approval import ApprovalError, load_approved_bundle
 from gh_context import resolve_context
 from gh_issue_blocking import reconcile_blocked_by
 from gh_issues import (
@@ -36,6 +37,7 @@ from issue_form import (
 )
 from json_io import JsonIOError, load_json, write_json
 from paths import sanitize_component
+from workflow_config import ConfigError, load_config
 
 
 class SyncError(RuntimeError):
@@ -401,7 +403,7 @@ def main() -> int:
     parser.add_argument(
         "--issue-template",
         type=Path,
-        default=Path(".github/ISSUE_TEMPLATE/sub_issue.yml"),
+        default=None,
         help="GitHub issue form YAML template path.",
     )
     parser.add_argument(
@@ -418,8 +420,13 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Render only; do not call GitHub mutation commands.",
+        help="Render only; do not call GitHub mutation commands or write cache/state.",
     )
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument(
+        "--spec-mode", choices=("openspec", "optional", "none"), default=None
+    )
+    parser.add_argument("--approved-bundle", type=Path, default=None)
     parser.add_argument(
         "--format",
         choices=("table", "json"),
@@ -427,21 +434,39 @@ def main() -> int:
         help="Output format.",
     )
     args = parser.parse_args()
-    context = resolve_context(repo=args.repo)
-
     try:
+        overrides = {"spec_policy": {"mode": args.spec_mode}} if args.spec_mode else {}
+        config = load_config(Path.cwd(), overrides, config_path=args.config)
+        if not args.dry_run:
+            if args.approved_bundle is None:
+                raise ApprovalError("--approved-bundle is required for a live sync")
+            current_bundle = load_json(args.bundle)
+            load_approved_bundle(args.approved_bundle, current_bundle, config.spec_mode)
+        context = resolve_context(
+            repo=args.repo,
+            repo_root=config.repo_root,
+            context_path=config.output_path("cache") / "context.json",
+            write_cache=not args.dry_run,
+        )
+        sync_state_path = args.sync_state
+        if sync_state_path is not None and not sync_state_path.is_absolute():
+            sync_state_path = config.repo_root / sync_state_path
         result = sync_bundle(
             bundle_path=args.bundle,
             repo=context.repo,
             repo_owner=context.repo_owner,
             repo_name=context.repo_name,
-            issue_template=args.issue_template,
+            issue_template=args.issue_template or config.template_path("work"),
             plan_key=None,
             run_id=args.run_id,
-            sync_state_path=args.sync_state,
+            sync_state_path=sync_state_path,
             dry_run=args.dry_run,
+            spec_mode=config.spec_mode,
+            field_mapping=config.data["fields"],
+            work_issue_type=config.work_issue_type,
+            github_host=context.host,
         )
-    except (SyncError, GhCliError, GitHubIssueError, IssueBundleError) as exc:
+    except (SyncError, GhCliError, GitHubIssueError, IssueBundleError, ConfigError, ApprovalError, JsonIOError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

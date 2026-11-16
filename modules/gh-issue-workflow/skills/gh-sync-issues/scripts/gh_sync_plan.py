@@ -240,6 +240,7 @@ def _close_and_remove_old_run(
     old_sync: dict[str, Any],
     new_sync: dict[str, Any],
     repo: str,
+    github_host: str,
 ) -> None:
     old_items = old_sync.get("items", [])
     if not isinstance(old_items, list) or not old_items:
@@ -258,7 +259,7 @@ def _close_and_remove_old_run(
     )
     comment = f"{comment_prefix} {comment_suffix}".strip()
 
-    issue_client = GitHubIssueClient(repo)
+    issue_client = GitHubIssueClient(repo, github_host=github_host)
 
     for raw in old_items:
         if not isinstance(raw, dict):
@@ -700,6 +701,7 @@ def _sync_new_run(
                 old_sync=old_sync,
                 new_sync=new_sync,
                 repo=context.repo,
+                github_host=context.host,
             )
         except (GhCliError, GitHubIssueError) as exc:
             print(f"WARNING: failed to cleanup old run: {exc}", file=sys.stderr)
@@ -732,6 +734,7 @@ def _sync_new_run(
             source_plan_path=str(args.plan),
             source_plan_sha256=plan_sha,
             child_issue_numbers=[int(n) for n in children if isinstance(n, int)],
+            field_mapping=args.workflow_config.data["fields"],
         )
         _reconcile_sub_issues(
             repo=context.repo,

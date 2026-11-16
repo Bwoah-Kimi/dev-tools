@@ -22,9 +22,7 @@ def install_fake_gh(repo: Path) -> tuple[dict[str, str], Path]:
     bin_dir = repo.parent / "fake-bin"
     bin_dir.mkdir(exist_ok=True)
     shutil.copy(MODULE / "tests" / "fixtures" / "gh_fake.py", bin_dir / "gh_fake.py")
-    if os.name == "nt":
-        shutil.copy(MODULE / "tests" / "fixtures" / "gh.cmd", bin_dir / "gh.cmd")
-    else:
+    if os.name != "nt":
         wrapper = bin_dir / "gh"
         wrapper.write_text(
             '#!/bin/sh\nexec python3 "$(dirname "$0")/gh_fake.py" "$@"\n',
@@ -35,6 +33,7 @@ def install_fake_gh(repo: Path) -> tuple[dict[str, str], Path]:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     env["GH_FAKE_LOG"] = str(log)
+    env["GH_WORKFLOW_GH"] = f"{sys.executable} {bin_dir / 'gh_fake.py'}"
     return env, log
 
 

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
 from typing import Any
@@ -17,8 +19,12 @@ def run(
     expect_json: bool = False,
     input_text: str | None = None,
 ) -> Any:
-    executable = shutil.which(args[0])
-    command = [executable or args[0], *args[1:]]
+    override = os.environ.get("GH_WORKFLOW_GH")
+    if override and args[0] == "gh":
+        command = [*shlex.split(override, posix=os.name != "nt"), *args[1:]]
+    else:
+        executable = shutil.which(args[0])
+        command = [executable or args[0], *args[1:]]
     proc = subprocess.run(
         command,
         text=True,
