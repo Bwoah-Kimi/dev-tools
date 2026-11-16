@@ -1,118 +1,63 @@
 ---
 name: gh-work-queue
-description: "Use when inspecting the GitHub Task queue, finding the next ready Task issue, rendering a PR body, or driving a Task issue through implementation, review, merge, and closure."
+description: "Use when inspecting a repository's configured GitHub work queue, finding ready work, rendering a PR body, or driving work through implementation, review, optional merge, and closure."
 ---
 
 # GitHub Work Queue
 
-## Workflow
+Read `.agents/gh-issue-workflow/config.json` and `project-context.md` first. Queue membership uses the configured work Issue Type; the parent type, paths, validation commands, agent roles, and PR policy also come from that profile. Run `gh-workflow-init` if the profile is missing.
 
-Queue membership is GitHub **Issue Type = `Task`** (no issue-body membership checks). Ordering is deterministic by ascending GitHub issue number.
+Ready means every native Blocked-by issue is closed. In progress means an open PR references the work issue through a closing keyword. Ordering is by ascending issue number.
 
-Readiness:
-- `--ready` means all GitHub-native **Blocked by** issues are `CLOSED`.
+## Routing
 
-In progress:
-- An issue is treated as in-progress if it has an `OPEN` PR that references it via closing keywords (exposed by `closedByPullRequestsReferences`).
+- List/preview queue: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py list --ready --format table`
+- Next ready item: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py next --ready --format json`
+- Inspect one item: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py show --issue N --format json`
+- Render PR body: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py pr-body --issue N --specs-changed "ACTUAL_SPECS" --tests-run "REAL_COMMANDS"`
+- Execute: follow **Execute issue** below and stop after opening the PR.
+- Merge: only a direct user request such as `merge PR #N` or an explicit execute-and-merge request enables **Merge + close**.
 
-### Routing
+## Execute issue
 
-Use the user’s wording to jump to the right subsection:
-- "work queue" / "task queue" / "list ready tasks" / "preview queue" → **Preview queue**
-- "what's next" / "next ready task" / "next task issue" → **Next ready task**
-- "show #123" / "show issue #123" / "inspect issue 123" → **Show issue N**
-- "render PR body" / "PR template text" → **Render PR body**
-- "merge PR" / "review threads" / "resolve review threads" → **Merge + close loop**
-- "execute" / "implement" / "do this issue" → **Execute issue** (after fetching JSON; stops at the open PR — merge + close is off by default)
-- "execute and merge" / "auto-merge" / "merge too" → **Execute issue** with merge enabled (run **Merge + close loop** once the PR is open)
+1. Check the configured queue ledger. If the issue is recorded closed, do not redispatch it. Verify the ledger against `git log` after context compaction.
+2. Fetch the work item and parent as JSON. If no parent exists, ask whether this item intentionally sits outside the normal parent/work flow.
+3. Require an implementation-ready plan, behavior-complete contract, acceptance checks, and the spec fields required by the configured `spec_policy`.
+4. Run GitHub preflight once per session. Then run each configured `validation.setup` command once per session and capture its result. Stop on `BLOCKED` or setup failure.
+5. Start from an up-to-date base and use one issue branch and one PR per work item.
+6. Dispatch the configured implementer with the issue number. The implementer fetches current issue/parent content and reads cited files plus required documents from `project-context.md`.
+7. Handle implementer status:
+   - `DONE`: continue to validation.
+   - `DONE_WITH_CONCERNS`: resolve or explicitly accept every concern first.
+   - `NEEDS_CONTEXT`: inspect authoritative sources. Answer and redispatch only when they resolve the need; otherwise present the need, evidence, impact, options, and recommendation to the user and pause.
+   - `BLOCKED`: surface the external/tooling blocker without guessing.
+8. Run every configured `validation.commands` entry after implementation commits, plus acceptance-specific commands proposed by the implementer. Store logs below the configured queue path. Route failures to the implementer by log path and rerun until they pass.
 
-Merge + close is opt-in: it never runs automatically. Reach it only when the user invokes it directly ("merge PR") or explicitly enables it for an execute run.
+### Repository policy execution
 
-### Preview queue (`preview`)
+- Read `config.json` and `project-context.md`; their configured validation commands and cited normative documents are the repository contract.
+- For `spec_policy: openspec`, read current canonical specs, reconcile intentional behavior after implementation and tests, then run `openspec validate --all --strict --no-interactive`.
+- For `spec_policy: optional`, reconcile each cited specification document. Run OpenSpec validation only for actual OpenSpec impacts; otherwise validate the cited documents using the configured commands.
+- For `spec_policy: none`, do not require `spec_impact` and record `spec review: skipped by repository policy`. Do not claim a spec review occurred.
+- Run every command in `validation.setup` once per session, then run every command in `validation.commands` after implementation. Preserve logs below the configured queue path.
+- Merge remains opt-in. Never use `--admin`, bypass required checks, or merge with unresolved non-outdated review threads.
 
-- [ ] Run: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py list --ready --format table`
+## Review and PR
 
-### Next ready task (`next`)
+1. Build a review packet below the configured queue path with the parent body, work-item body, actual references read, specification reconciliation/skipped reason, compact validation evidence with log paths, and diff file path. Exclude implementation chat and confidence claims.
+2. Generate the diff with `review_package.sh BASE_SHA HEAD_SHA ISSUE_NUMBER QUEUE_OUTPUT_ROOT` and give reviewers the packet plus diff path, not a pasted diff.
+3. For `openspec` and applicable `optional` impacts, dispatch the configured spec reviewer. Verify that implementation, tests, and normative documents agree. Investigate every unverifiable item with the controller's cross-issue context.
+4. Dispatch the configured code reviewer after spec review when enabled. Verify findings against the repository before changing code. Route critical/important findings through the implementer, rerun affected validation, refresh the packet/diff, and rereview. Rerun spec review when fixes materially change behavior or requirement coverage.
+5. If subagent dispatch is unavailable, stop and report the limitation instead of collapsing independent review into the main session.
+6. Render the PR body using actual changed specification paths or the policy-aware no-change reason and the real passing validation commands. Create the PR using the configured close keyword.
+7. Append `#ISSUE_NUMBER: pr-open (PR #N, awaiting merge)` to the configured queue ledger, report the PR URL, and stop unless merge was explicitly enabled.
 
-- [ ] Run: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py next --ready --format json`
-- [ ] Capture from JSON: `issue_number`, `title`, `url`, `blocked_by`, `closing_prs`, `body`, `parent_issue`.
-- [ ] If the user asked to execute the issue, continue to **Execute issue**.
+## Merge + close
 
-### Show issue N (`issue N`)
+Merge is opt-in and never runs automatically. Dispatch the configured merge closer with PR and issue numbers. It must verify review threads, required checks, reviews, repository merge method, and issue closure. Admin bypass is forbidden.
 
-- [ ] Run: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py show --issue N --format json`
-- [ ] Capture from JSON: `issue_number`, `title`, `url`, `blocked_by`, `closing_prs`, `body`, `parent_issue`.
-- [ ] If the user asked to execute the issue, continue to **Execute issue**.
+- `MERGED`: confirm the issue is closed, record `#ISSUE_NUMBER: closed (PR #N, commits base7..head7)`, and return to the updated base branch.
+- `NEEDS_CODE_CHANGE`: route each specific thread to implementation, rerun validation, refresh review evidence, and repeat the applicable spec/code reviews before retrying merge.
+- `BLOCKED`: report failing checks, conflicts, missing approval, or other blocker. Do not force the merge.
 
-### Render PR body (`pr-body`)
-
-- [ ] Run: `python3 .agents/skills/gh-work-queue/scripts/gh_work_queue.py pr-body --issue N --specs-changed "<fill>" --tests-run "<fill>"`
-
-### Execute issue (issue → PR; merge → closed is opt-in)
-
-- [ ] Context economy: dispatch prompts and re-dispatches carry the issue number plus the specific finding only — never paste prior reports, earlier review findings, or raw validation output.
-- [ ] Check `out/gh-work-queue/progress.md` (if it exists). If this issue is already marked closed there, skip it — do not re-dispatch.
-- [ ] Use the current Task issue as the executable proposal and the `parent_issue` object as the overall objective, assumptions, and atom-coverage boundary.
-  - [ ] If `parent_issue` is `null`, stop and ask the user whether this Task is intentionally outside the normal Feature → Task flow.
-  - [ ] Require an implementation-ready plan, a behavior-complete `## Intent and Contract`, and `## Expected Spec Impact`. Do not execute old-format Tasks through a compatibility path.
-- [ ] Session preflight (once per session): dispatch the `gh-preflight` subagent with scope `work-queue` to verify GitHub access. Reuse `READY`; stop and surface `BLOCKED` remediation.
-- [ ] Build environment (once per session, after preflight): dispatch the `build-env-runner` subagent (the `build-env` skill), capture its env exports, `uv run --extra dev` prefix, baseline, and caveats, then reuse them for validation. Do not send build logs or controller-only environment setup to the implementer.
-- [ ] Start from an up-to-date base branch, then create/switch to one issue branch. Work on one Task issue per branch/PR.
-- [ ] Dispatch the `gh-implementer` subagent with `ISSUE_NUMBER`. The implementer fetches the current Task + parent with `gh_work_queue.py show`, reads cited repo files, and works from those sources of truth.
-- [ ] The implementer reads the current canonical specs as the behavioral baseline, implements production code and tests first, then reconciles specs before reporting `DONE`:
-  - [ ] Treat `Expected Spec Impact` paths as planning guidance, not a pre-authored or exhaustive requirement delta.
-  - [ ] After behavior stabilizes, edit every canonical spec needed to describe the intentional observable or cross-component contract. Do not promote incidental algorithms, helpers, or test placement into behavior specs.
-  - [ ] An explicit no-impact rationale means verify that implementation preserves canonical behavior; do not churn specs merely to mention the Task.
-  - [ ] Run focused strict OpenSpec validation after reconciliation. The final implementation, tests, and canonical specs must agree before review.
-- [ ] Handle the implementer status before review:
-  - [ ] `DONE` → continue to validation.
-  - [ ] `DONE_WITH_CONCERNS` → resolve or explicitly accept every concern before review.
-  - [ ] `NEEDS_CONTEXT` → treat the report as evidence and a request for direction, not as a prescribed remedy:
-    - [ ] Inspect the Task, parent, cited references, and repository. If they already provide an authoritative answer, re-dispatch the issue number plus the exact need and answer.
-    - [ ] If no authoritative answer exists, sources conflict, implementation appears infeasible, or human judgment is required, surface the implementer's `Need`, `Evidence`, `Impact`, `Options`, and `Recommendation` unchanged in the main thread and pause.
-    - [ ] Follow the main-thread decision: answer and re-dispatch, amend and re-review the Task, split or replace it, add a dependency, or stop. Do not silently reinterpret the contract or force a predetermined remedy.
-  - [ ] `BLOCKED` → stop and surface an external access, tooling, or environment blocker instead of guessing.
-- [ ] Apply the same status handling after every implementer re-dispatch, including validation failures, internal review findings, and GitHub review feedback.
-- [ ] Build the controller-owned validation list from the Task acceptance checks, repository quality gates, `openspec validate --all --strict --no-interactive`, build-env exports/prefix, and any stronger commands the implementer proposed.
-- [ ] Validate via `gh-validation-runner` after implementation commits, using `out/gh-work-queue/execute/ISSUE_NUMBER/logs/`.
-  - [ ] `FAIL` → route the specific failures (reference the log-file paths; do not paste raw output) back through the implementer role, then re-run the runner until it passes.
-  - [ ] `PASS` → continue to review.
-- [ ] Prepare a review packet at `out/gh-work-queue/review/ISSUE_NUMBER/packet.md`. Give the reviewers only this packet plus the diff:
-  - [ ] `## Parent Issue` → paste `parent_issue.body`.
-  - [ ] `## Task Issue` → paste the Task issue body.
-  - [ ] `## References` → list the repo-relative paths you actually read, or `(none)`.
-  - [ ] `## Spec Reconciliation` → list expected versus actually changed canonical spec paths and briefly justify every expected path left unchanged, every unexpected path changed, or why no spec changed.
-  - [ ] `## Validation Evidence` → record the `gh-validation-runner` compact result (`cmd → PASS/FAIL`) and the log-dir path. Do not paste raw command output.
-  - [ ] `## Diff File` → generate the diff file by running `bash .agents/skills/gh-work-queue/scripts/review_package.sh BASE_SHA HEAD_SHA ISSUE_NUMBER` and record the output path. Do not paste diff content into the packet or your own context.
-  - [ ] Do **not** include implementation chat, scratch reasoning, or confidence claims in the packet.
-- [ ] Dispatch the `gh-spec-reviewer` subagent with the review packet (include the diff file path).
-- [ ] The spec review must verify that the implementation satisfies `Intent and Contract`, that the final canonical specs capture all intentional behavior without incidental implementation detail, and that implementation/tests/specs agree. `Expected Spec Impact` is guidance: require an explanation when a listed path remains unchanged or an unlisted path changes, but judge the result against the approved contract rather than the forecast.
-- [ ] Resolve each `⚠️ Cannot verify from diff` item yourself — you hold the cross-issue context the reviewer lacks. If you confirm a gap, treat it as a failed spec review and route back to the implementer.
-- [ ] If spec review finds issues:
-  - [ ] Route all `Critical` and `Important` findings back through the implementer role, not through same-session edits.
-  - [ ] If a finding is unclear, clarify it before making code changes.
-  - [ ] Verify reviewer claims against the issue, specs, and codebase instead of accepting them blindly.
-  - [ ] If a finding is incorrect, push back with concrete reasoning instead of making a fake fix.
-  - [ ] Fix findings in coherent batches, rerun affected validation, refresh the review packet, and re-dispatch spec reviewer until approved.
-- [ ] Dispatch the `gh-code-reviewer` subagent with the refreshed review packet (include the diff file path; regenerate the diff if fixes changed the range).
-- [ ] If code review finds issues:
-  - [ ] Route all `Critical` and `Important` findings back through the implementer role, rerun affected validation, refresh the review packet, and re-dispatch code reviewer until approved.
-  - [ ] If code-quality fixes materially change behavior, requirements coverage, or cited refs, rerun spec review before proceeding.
-- [ ] If the harness cannot dispatch subagents, stop and surface that limitation instead of collapsing review into the main session.
-- [ ] Render the PR body with the actual changed canonical spec paths (or `(none; <reason>)`) and the real validation commands that passed after the latest fix round.
-- [ ] Create a PR that links the issue (include `Fixes #ISSUE_NUMBER`).
-- [ ] Merge + close is OFF by default. Once the PR is open, append one line to `out/gh-work-queue/progress.md`: `#ISSUE_NUMBER: pr-open (PR #N, awaiting merge)`, report the PR URL, and stop here — leave merge + close to the user (manual, or a later explicit merge request).
-- [ ] Only when merge is enabled for this run (the user asked to "execute and merge" / "auto-merge", or invokes merge directly) continue to **Merge + close loop**.
-- [ ] Never re-dispatch an issue the progress ledger already marks closed — check the ledger and `git log` after any context compaction.
-
-### Merge + close loop (`merge`)
-
-This step is opt-in and never runs automatically. Reach it only when the user invokes it directly ("merge PR #N") or explicitly enables merge for an **Execute issue** run. Like the implementer and reviewers, the controller drives it through a subagent rather than running the loop inline.
-
-- [ ] Dispatch the `gh-merge-closer` subagent with `PR_NUMBER` and `ISSUE_NUMBER` (for a standalone "merge PR #N", resolve `ISSUE_NUMBER` from the PR's closing-issue reference). No packet to assemble: the worker reads PR state, base branch, repo merge method, and review threads from GitHub itself, and its escalation and merge-gate rules live in its own definition.
-- [ ] Handle the worker status:
-  - [ ] `MERGED` → it confirmed the issue is `CLOSED`. Append one line to `out/gh-work-queue/progress.md`: `#ISSUE_NUMBER: closed (PR #N, commits base7..head7)`, then return to the updated base branch.
-  - [ ] `NEEDS_CODE_CHANGE` → for each escalated thread, route the issue number plus the specific thread context through the implementer role, rerun affected validation via the `gh-validation-runner` subagent, and refresh the review packet. If the change materially affects behavior or requirements coverage, rerun the staged review flow (spec → code). Push the fixes, then re-dispatch `gh-merge-closer`.
-  - [ ] `BLOCKED` → surface the blocker (failing required checks, a merge conflict needing a decision, a missing approval) instead of forcing the merge. Do not use `--admin`.
-- [ ] If the harness cannot dispatch subagents, surface that limitation; the documented merge steps live in the `gh-merge-closer` definition and can be run manually instead of collapsing them into automated session state.
-- [ ] Do not start the next queue item until merge is complete, unresolved review threads are at zero, and the issue is confirmed closed.
+Do not start another queue item until an explicitly enabled merge is complete and its issue is confirmed closed.

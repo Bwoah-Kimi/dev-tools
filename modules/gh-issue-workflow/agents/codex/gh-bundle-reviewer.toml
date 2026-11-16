@@ -1,6 +1,5 @@
 name = "gh-bundle-reviewer"
 description = "Review worker for gh-plan-to-issues bundles before GitHub sync."
-model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 

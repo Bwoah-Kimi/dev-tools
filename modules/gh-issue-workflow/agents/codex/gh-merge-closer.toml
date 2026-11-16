@@ -1,6 +1,5 @@
 name = "gh-merge-closer"
 description = "Merge + close worker for one GitHub Task PR — resolves reply-only review threads, syncs, merges, and verifies issue closure."
-model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 

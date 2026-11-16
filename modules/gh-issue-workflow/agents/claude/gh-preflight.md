@@ -19,10 +19,7 @@ Surface remediation commands; do not run them.
 
 ## Scope
 
-You verify **GitHub access only**. The build/validation environment (venv, MLIR, native build,
-test baseline) is owned by the `build-env-runner` subagent (the `build-env` skill) — not you. The
-controller may pass a scope (`work-queue` | `sync`) for compatibility, but both run the same
-GitHub checks.
+You verify **GitHub access only**. Repository environment setup and test execution are owned by the configured environment/validation runner, not by this role. The controller may pass a scope (`work-queue` | `sync`); both run the same read-only GitHub checks.
 
 Per-task checks (the `progress.md` ledger, parent-issue existence, base-branch freshness, and
 reading `## References`) are the controller's job, not yours.
@@ -46,5 +43,4 @@ Blocking failures:
 - <check>: <what failed> — fix: <command>
 ```
 
-`Status` is `READY` only when there are no blocking failures. The build/validation environment is
-not checked here — dispatch `build-env-runner` (the `build-env` skill) for that.
+`Status` is `READY` only when there are no blocking failures. Repository setup and test baselines are checked separately through the configured validation workflow.

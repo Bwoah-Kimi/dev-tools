@@ -1,6 +1,5 @@
 name = "gh-validation-runner"
 description = "Runs a Task's validation commands and returns a compact PASS/FAIL result; full output stays in log files."
-model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 

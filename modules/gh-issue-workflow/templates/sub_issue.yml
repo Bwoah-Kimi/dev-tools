@@ -33,7 +33,7 @@ body:
     id: spec_impact
     attributes:
       label: Expected Spec Impact
-      description: "Explain which behavior contracts are likely to need reconciliation after implementation, and list the likely canonical `openspec/specs/**/spec.md` paths. Do not pre-author exact requirement deltas. Use `(none; <reason>)` only when the Task should preserve all canonical behavior."
+      description: "Explain which behavior contracts or normative documents are likely to need reconciliation, using paths allowed by the repository's specification policy. Do not pre-author exact requirement deltas. An empty path list requires a concrete no-change rationale. This field is omitted when spec_policy is none."
     validations:
       required: true
 

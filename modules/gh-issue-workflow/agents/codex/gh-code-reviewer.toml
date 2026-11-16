@@ -1,6 +1,5 @@
 name = "gh-code-reviewer"
 description = "Code-quality reviewer for one GitHub Task implementation before PR creation."
-model = "gpt-5.6-sol"
 model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 

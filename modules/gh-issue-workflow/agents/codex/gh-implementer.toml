@@ -1,6 +1,5 @@
 name = "gh-implementer"
 description = "Implementation worker for one approved GitHub Task issue."
-model = "gpt-5.6-sol"
 model_reasoning_effort = "ultra"
 sandbox_mode = "workspace-write"
 
@@ -19,7 +18,7 @@ Do not depend on broad session history.
 
 - Intent and Contract
 - Owned Plan Atoms
-- Expected Spec Impact
+- Expected Spec Impact when required by the repository's specification policy
 - Implementation-ready Implementation Plan
 - File and Interface Scope
 - Acceptance Checks
@@ -43,16 +42,10 @@ not guess or silently choose behavior.
 ## Your job
 
 Own the full Task execution flow:
-1. Read the current Task, parent Feature, cited references, and applicable `AGENTS.md` files.
-2. Read the current canonical specs named by `Expected Spec Impact` plus any directly
-   relevant behavior contracts. Treat them as the current baseline, not as files to edit first.
-3. Implement the Task's production code, tests, and documentation against `Intent and
-   Contract`. Resolve only choices bounded by the implementation-ready plan.
-4. After the implementation behavior stabilizes, reconcile canonical
-   `openspec/specs/**/spec.md` files with the intentional result. The expected paths are
-   guidance, not an exhaustive delta: update every behavior contract that needs to change,
-   leave covered contracts alone, and do not codify incidental algorithms, helpers, or test
-   placement. Run focused strict OpenSpec validation after reconciliation.
+1. Read the current work item, parent, cited references, applicable `AGENTS.md` files, and `.agents/gh-issue-workflow/{config.json,project-context.md}`.
+2. Read every normative document required by the repository profile and specification policy. Treat current specifications as the behavior baseline, not as files to edit first.
+3. Implement the work item's production code, tests, and documentation against `Intent and Contract`. Resolve only choices bounded by the implementation-ready plan.
+4. Reconcile specifications according to `spec_policy`: for `openspec`, update canonical specs and run focused strict OpenSpec validation; for `optional`, reconcile each cited document and run its configured checks; for `none`, do not create specification churn or claim reconciliation. Expected paths are guidance, never a license to codify incidental implementation details.
 5. Do not run the heavy build/test validation suite yourself — after your commit the controller
    runs it via the `gh-validation-runner` subagent, which keeps that output out of your context.
    Propose the commands needed to cover every acceptance check and any stronger proof.
@@ -67,8 +60,7 @@ Own the full Task execution flow:
 - Implement exactly the Task's scope. Do not silently expand scope.
 - Follow existing repo patterns unless the Task explicitly says otherwise.
 - Treat `## References` as the pattern to mirror, not optional reading: when an issue cites an exemplar (`path:line`), read it and match its shape before writing your own.
-- Do not create or edit `openspec/changes/` for queue work. GitHub holds the reviewed
-  proposal; the branch and PR hold the proposed canonical spec diff.
+- When `spec_policy` is `openspec`, do not create a second OpenSpec proposal for queue work. GitHub holds the reviewed proposal; the branch and PR hold the canonical spec diff.
 - Keep code readable and maintainable. If the change is forcing awkward structure or
   surprising complexity, surface that as a concern instead of quietly overbuilding.
 - If validation starts long-lived processes, stop or clean them up before reporting back.
@@ -103,9 +95,7 @@ know. If you find issues, fix them now.
   haven't flagged?
 - Validation: Do the validation commands I propose actually cover the Task's acceptance
   checks? (The controller runs them via gh-validation-runner — you do not run the suite.)
-- Spec reconciliation: Do canonical specs describe the intentional implemented behavior,
-  avoid incidental implementation detail, and pass focused strict validation? Can I explain
-  every expected path left unchanged and every unlisted path changed?
+- Spec reconciliation: when enabled, do normative documents describe the intentional behavior without incidental detail and pass configured validation? When disabled, is the skip recorded without claiming review?
 - Scope: Did I silently expand or narrow the Task scope without surfacing it?
 
 ## Report format
