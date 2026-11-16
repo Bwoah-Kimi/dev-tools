@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
 
@@ -14,6 +14,7 @@ from issue_bundle import (
     WorkItem,
     load_issue_bundle,
 )
+from spec_policy import validate_spec_path
 
 _PLACEHOLDER_PATTERNS = [
     re.compile(r"\bTODO\b", re.IGNORECASE),
@@ -64,27 +65,19 @@ def _check_required_list(
             )
 
 
-def _is_canonical_spec_path(value: str) -> bool:
-    path = PurePosixPath(value)
-    return not (
-        "\\" in value
-        or path.is_absolute()
-        or ".." in path.parts
-        or len(path.parts) < 4
-        or path.parts[:2] != ("openspec", "specs")
-        or path.name != "spec.md"
-    )
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate a gh-plan-to-issues JSON bundle before syncing."
     )
     parser.add_argument("--bundle", required=True, type=Path, help="Path to bundle.json")
+    parser.add_argument(
+        "--spec-mode", choices=("openspec", "optional", "none"), default="openspec"
+    )
+    parser.add_argument("--spec-root", action="append", default=[])
     args = parser.parse_args()
 
     try:
-        parent, items, _ = load_issue_bundle(args.bundle)
+        parent, items, _ = load_issue_bundle(args.bundle, spec_mode=args.spec_mode)
     except IssueBundleError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -195,25 +188,32 @@ def main() -> int:
                 continue
             owners_by_atom.setdefault(atom_id, set()).add(item.id)
 
-        _check_required_text(
-            warnings=warnings,
-            label="spec_impact.rationale",
-            value=item.spec_impact.rationale,
-            item=item,
-        )
-        seen_spec_paths: set[str] = set()
-        for idx, spec_path in enumerate(item.spec_impact.spec_paths, start=1):
-            label = f"{item.id}: spec_impact.spec_paths[{idx}]"
-            if not _is_canonical_spec_path(spec_path):
-                errors.append(
-                    f"{label} must be a canonical openspec/specs/**/spec.md path: {spec_path!r}"
-                )
-                continue
-            if spec_path in seen_spec_paths:
-                errors.append(f"{label} duplicates {spec_path!r} within {item.id}")
-                continue
-            seen_spec_paths.add(spec_path)
-            spec_path_users.setdefault(spec_path, []).append(item.id)
+        if item.spec_impact is not None:
+            _check_required_text(
+                warnings=warnings,
+                label="spec_impact.rationale",
+                value=item.spec_impact.rationale,
+                item=item,
+            )
+            seen_spec_paths: set[str] = set()
+            for idx, spec_path in enumerate(item.spec_impact.spec_paths, start=1):
+                label = f"{item.id}: spec_impact.spec_paths[{idx}]"
+                path_error = validate_spec_path(spec_path, args.spec_mode, args.spec_root)
+                if path_error is not None:
+                    if args.spec_mode == "openspec":
+                        path_error = (
+                            f"{label} must be a canonical openspec/specs/**/spec.md path: "
+                            f"{spec_path!r}"
+                        )
+                    else:
+                        path_error = f"{label} {path_error}"
+                    errors.append(path_error)
+                    continue
+                if spec_path in seen_spec_paths:
+                    errors.append(f"{label} duplicates {spec_path!r} within {item.id}")
+                    continue
+                seen_spec_paths.add(spec_path)
+                spec_path_users.setdefault(spec_path, []).append(item.id)
 
         for idx, check in enumerate(item.acceptance_checks, start=1):
             referenced = sorted(set(re.findall(r"\bA\d+\b", check)))
@@ -257,7 +257,8 @@ def main() -> int:
     print(f"- atoms: {len(atom_ids)}")
     print(f"- items: {len(items)}")
     for item in items:
-        print(f"- {item.id}: {item.title} ({len(item.spec_impact.spec_paths)} expected spec paths)")
+        spec_count = len(item.spec_impact.spec_paths) if item.spec_impact is not None else 0
+        print(f"- {item.id}: {item.title} ({spec_count} expected spec paths)")
 
     if warnings:
         print("\nWarnings:")

@@ -33,7 +33,7 @@ class WorkItem:
     title: str
     intent_and_contract: str
     owned_atoms: list[str]
-    spec_impact: SpecImpact
+    spec_impact: SpecImpact | None
     implementation_plan: str
     file_and_interface_scope: str
     acceptance_checks: list[str]
@@ -121,7 +121,11 @@ def _parse_spec_impact(value: Any, *, label: str) -> SpecImpact:
 
 def load_issue_bundle(
     path: Path,
+    *,
+    spec_mode: str = "openspec",
 ) -> tuple[BundleParent, list[WorkItem], dict[str, Any]]:
+    if spec_mode not in {"openspec", "optional", "none"}:
+        raise IssueBundleError(f"Unknown specification policy: {spec_mode}")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -161,10 +165,13 @@ def load_issue_bundle(
             label=f"items[{idx}].owned_atoms",
         )
 
-        spec_impact = _parse_spec_impact(
-            raw_item.get("spec_impact"),
-            label=f"items[{idx}].spec_impact",
-        )
+        if "spec_impact" not in raw_item and spec_mode == "none":
+            spec_impact = None
+        else:
+            spec_impact = _parse_spec_impact(
+                raw_item.get("spec_impact"),
+                label=f"items[{idx}].spec_impact",
+            )
 
         implementation_plan = _require_nonempty_str(
             raw_item.get("implementation_plan"),
