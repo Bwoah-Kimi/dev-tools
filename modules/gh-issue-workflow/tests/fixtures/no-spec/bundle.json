@@ -1,0 +1,37 @@
+{
+  "parent": {
+    "title": "Fixture plan",
+    "objective": "Deliver two ordered contracts",
+    "scope": ["Fixture behavior"],
+    "assumptions": [],
+    "atom_registry": ["A1: First behavior", "A2: Second behavior"]
+  },
+  "items": [
+    {
+      "id": "S1",
+      "title": "First fixture task",
+      "intent_and_contract": "Deliver the first behavior",
+      "owned_atoms": ["A1: First behavior"],
+      "implementation_plan": "Implement and validate the first behavior",
+      "file_and_interface_scope": "src/first.py",
+      "acceptance_checks": ["[A1] First validation passes"],
+      "assumptions_defaults": "(none)",
+      "references": ["docs/design.md"],
+      "handoff_contract": "Produces the first behavior",
+      "dependencies": []
+    },
+    {
+      "id": "S2",
+      "title": "Second fixture task",
+      "intent_and_contract": "Deliver the second behavior after the first",
+      "owned_atoms": ["A2: Second behavior"],
+      "implementation_plan": "Implement and validate the dependent behavior",
+      "file_and_interface_scope": "src/second.py",
+      "acceptance_checks": ["[A2] Second validation passes"],
+      "assumptions_defaults": "(none)",
+      "references": ["docs/design.md"],
+      "handoff_contract": "Consumes S1",
+      "dependencies": ["S1"]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "issue_types": {"parent": "Feature", "work": "Task"},
+  "spec_policy": {"mode": "openspec", "roots": []},
+  "validation": {"setup": [], "commands": ["python --version"]},
+  "pr_policy": {"close_keyword": "Fixes", "merge": "opt-in", "allow_admin": false},
+  "required_documents": ["openspec/specs/cli/spec.md"],
+  "constraints": ["Keep implementation and the CLI specification in agreement."]
+}

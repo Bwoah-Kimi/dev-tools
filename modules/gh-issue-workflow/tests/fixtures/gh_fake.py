@@ -46,6 +46,20 @@ def summary(issue: dict) -> dict:
     return {key: issue[key] for key in ("id", "number", "title", "url", "body", "state")}
 
 
+def queue_node(issue: dict, state: dict) -> dict:
+    blockers = []
+    for issue_id in state["blocked_by"].get(issue["id"], []):
+        blocker = issue_by_id(state, issue_id)
+        blockers.append({"number": blocker["number"], "state": blocker["state"], "url": blocker["url"]})
+    type_name = TYPE_NAMES.get(issue.get("issue_type_id"), "")
+    return {
+        **summary(issue),
+        "issueType": {"name": type_name},
+        "blockedBy": {"nodes": blockers},
+        "closedByPullRequestsReferences": {"nodes": []},
+    }
+
+
 def arg_value(args: list[str], flag: str) -> str:
     return args[args.index(flag) + 1]
 
@@ -54,13 +68,22 @@ def graphql(args: list[str], state: dict) -> int:
     payload = json.loads(sys.stdin.read())
     query = payload.get("query", "")
     variables = payload.get("variables", {})
-    if "issueTypes" in query:
+    if "issues(" in query:
+        nodes = [queue_node(issue, state) for issue in state["issues"] if issue["state"] == "OPEN"]
+        data = {"repository": {"issues": {
+            "nodes": nodes, "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }}}
+    elif "issue(number:" in query:
+        issue = issue_by_number(state, int(variables["number"]))
+        data = {"repository": {"issue": queue_node(issue, state)}}
+    elif "issueTypes" in query:
         data = {"repository": {"issueTypes": {"nodes": [
             {"id": value, "name": key} for key, value in TYPE_IDS.items()
         ]}}}
     elif "updateIssue" in query:
         issue = issue_by_id(state, variables["id"])
         issue["issue_type_id"] = variables["issueTypeId"]
+        save_state(state)
         record(
             "set-type", args, item=issue.get("item_id"), role=issue["role"],
             issue_type=TYPE_NAMES[variables["issueTypeId"]],
@@ -78,6 +101,7 @@ def graphql(args: list[str], state: dict) -> int:
             existing.append(blocker["id"])
         if "removeBlockedBy" in query and blocker["id"] in existing:
             existing.remove(blocker["id"])
+        save_state(state)
         record("blocked-by", args, item=issue.get("item_id"), blocker=blocker.get("item_id"))
         name = "addBlockedBy" if "addBlockedBy" in query else "removeBlockedBy"
         data = {name: {"clientMutationId": "fake"}}
