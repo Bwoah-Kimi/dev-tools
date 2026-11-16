@@ -1,0 +1,45 @@
+{
+  "parent": {
+    "title": "OpenSpec fixture plan",
+    "objective": "Deliver two ordered contracts",
+    "scope": ["Fixture behavior"],
+    "assumptions": [],
+    "atom_registry": ["A1: First behavior", "A2: Second behavior"]
+  },
+  "items": [
+    {
+      "id": "S1",
+      "title": "First OpenSpec task",
+      "intent_and_contract": "Deliver the first behavior",
+      "owned_atoms": ["A1: First behavior"],
+      "spec_impact": {
+        "rationale": "Keep the CLI specification aligned",
+        "spec_paths": ["openspec/specs/cli/spec.md"]
+      },
+      "implementation_plan": "Implement, reconcile the spec, and validate",
+      "file_and_interface_scope": "src/first.py",
+      "acceptance_checks": ["[A1] First validation passes"],
+      "assumptions_defaults": "(none)",
+      "references": ["openspec/specs/cli/spec.md"],
+      "handoff_contract": "Produces the first behavior",
+      "dependencies": []
+    },
+    {
+      "id": "S2",
+      "title": "Second OpenSpec task",
+      "intent_and_contract": "Deliver the second behavior after the first",
+      "owned_atoms": ["A2: Second behavior"],
+      "spec_impact": {
+        "rationale": "Keep the CLI specification aligned",
+        "spec_paths": ["openspec/specs/cli/spec.md"]
+      },
+      "implementation_plan": "Implement, reconcile the spec, and validate",
+      "file_and_interface_scope": "src/second.py",
+      "acceptance_checks": ["[A2] Second validation passes"],
+      "assumptions_defaults": "(none)",
+      "references": ["openspec/specs/cli/spec.md"],
+      "handoff_contract": "Consumes S1",
+      "dependencies": ["S1"]
+    }
+  ]
+}

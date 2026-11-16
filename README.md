@@ -17,6 +17,7 @@ The root of this repo is a catalog. Each substantial helper owns its implementat
 | [`modules/rtl-coding-skills`](modules/rtl-coding-skills/README.md) | Submodule-backed Claude Code and Codex skills for project-aware RTL authoring and Verilator verification |
 | [`modules/ppt-master`](modules/ppt-master/README.md) | Submodule-backed Claude Code plugin for generating editable PPTX decks from PDF, DOCX, URL, and Markdown |
 | [`modules/openspec`](modules/openspec/README.md) | Submodule-backed OpenSpec CLI for spec-driven development workflows and project-level agent skills |
+| [`modules/gh-issue-workflow`](modules/gh-issue-workflow/README.md) | Repository-local, configuration-driven GitHub Issue workflow skills with an agent-led init, read-only doctor, and manifest-based updates |
 | [`modules/proxy`](modules/proxy/README.md) | `proxy` executable and shell wrapper installer |
 | [`modules/shell-startup-normalizer`](modules/shell-startup-normalizer/README.md) | Codex and Claude Code skill for reorganizing shell startup files |
 | [`modules/superpowers`](modules/superpowers/README.md) | Submodule-backed composable software-development workflow skills for coding agents |

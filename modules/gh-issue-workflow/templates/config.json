@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "issue_types": {"parent": "Feature", "work": "Task"},
+  "templates": {
+    "parent": ".github/ISSUE_TEMPLATE/parent_issue.yml",
+    "work": ".github/ISSUE_TEMPLATE/sub_issue.yml",
+    "pr": ".github/pull_request_template.md"
+  },
+  "fields": {
+    "parent": {
+      "objective": "objective",
+      "scope": "scope",
+      "assumptions": "assumptions",
+      "atom_registry": "atom_registry",
+      "coverage_matrix": "coverage_matrix"
+    },
+    "work": {
+      "intent_and_contract": "intent_and_contract",
+      "owned_atoms": "owned_atoms",
+      "spec_impact": "spec_impact",
+      "implementation_plan": "implementation_plan",
+      "file_and_interface_scope": "file_and_interface_scope",
+      "acceptance_checks": "acceptance_checks",
+      "assumptions_defaults": "assumptions_defaults",
+      "references": "references",
+      "handoff_contract": "handoff_contract",
+      "dependencies": "dependencies"
+    }
+  },
+  "spec_policy": {"mode": "none", "roots": []},
+  "validation": {"setup": [], "commands": []},
+  "agents": {
+    "preflight": "gh-preflight",
+    "bundle_reviewer": "gh-bundle-reviewer",
+    "environment": "gh-validation-runner",
+    "implementer": "gh-implementer",
+    "spec_reviewer": "gh-spec-reviewer",
+    "code_reviewer": "gh-code-reviewer",
+    "merge_closer": "gh-merge-closer"
+  },
+  "paths": {
+    "plan": "out/gh-plan-to-issues",
+    "queue": "out/gh-work-queue",
+    "cache": "out/gh-skills"
+  },
+  "pr_policy": {"close_keyword": "Fixes", "merge": "opt-in", "allow_admin": false}
+}

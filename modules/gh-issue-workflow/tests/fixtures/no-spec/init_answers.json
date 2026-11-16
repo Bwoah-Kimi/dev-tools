@@ -1,0 +1,8 @@
+{
+  "issue_types": {"parent": "Initiative", "work": "Work Item"},
+  "spec_policy": {"mode": "none", "roots": []},
+  "validation": {"setup": [], "commands": ["python --version"]},
+  "pr_policy": {"close_keyword": "Resolves", "merge": "opt-in", "allow_admin": false},
+  "required_documents": ["docs/design.md"],
+  "constraints": ["Preserve the documented fixture contract."]
+}
