@@ -431,7 +431,7 @@ def _prepare_run(args: argparse.Namespace) -> tuple[
         print(f"ERROR: failed to read bundle: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    issue_client = GitHubIssueClient(context.repo)
+    issue_client = GitHubIssueClient(context.repo, github_host=context.host)
     try:
         feature_issue_type_id = require_issue_type_id(
             owner=context.repo_owner,

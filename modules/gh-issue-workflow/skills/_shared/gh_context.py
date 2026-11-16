@@ -5,8 +5,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from gh_cli import GhCliError, run
+from workflow_config import discover_repo_root
 
 DEFAULT_CONTEXT_PATH = Path("out/gh-skills/context.json")
 
@@ -16,6 +18,8 @@ class GhContext:
     repo: str
     repo_owner: str
     repo_name: str
+    host: str
+    repo_root: str
 
 
 def _extract_repo_owner(payload: dict[str, Any]) -> str:
@@ -33,7 +37,7 @@ def _repo_view(repo: str | None) -> dict[str, Any]:
     args = ["gh", "repo", "view"]
     if repo:
         args.append(repo)
-    args.extend(["--json", "name,nameWithOwner,owner"])
+    args.extend(["--json", "name,nameWithOwner,owner,url"])
     try:
         payload = run(args, expect_json=True)
     except GhCliError as exc:
@@ -57,17 +61,10 @@ def _load_context(path: Path) -> GhContext | None:
     if not isinstance(payload, dict):
         raise GhCliError(f"Invalid gh-skills context payload: {path}")
 
-    repo = payload.get("repo")
-    repo_owner = payload.get("repo_owner")
-    repo_name = payload.get("repo_name")
-    values = (repo, repo_owner, repo_name)
+    values = tuple(payload.get(key) for key in ("repo", "repo_owner", "repo_name", "host", "repo_root"))
     if not all(isinstance(value, str) and value.strip() for value in values):
         return None
-    return GhContext(
-        repo=repo.strip(),
-        repo_owner=repo_owner.strip(),
-        repo_name=repo_name.strip(),
-    )
+    return GhContext(*(value.strip() for value in values))
 
 
 def _write_context(path: Path, context: GhContext) -> None:
@@ -76,6 +73,8 @@ def _write_context(path: Path, context: GhContext) -> None:
         "repo": context.repo,
         "repo_owner": context.repo_owner,
         "repo_name": context.repo_name,
+        "host": context.host,
+        "repo_root": context.repo_root,
     }
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -85,15 +84,14 @@ def _write_context(path: Path, context: GhContext) -> None:
 def resolve_context(
     *,
     repo: str | None = None,
-    context_path: Path = DEFAULT_CONTEXT_PATH,
+    repo_root: Path | None = None,
+    context_path: Path | None = None,
+    write_cache: bool = True,
 ) -> GhContext:
-    cached = _load_context(context_path)
+    root = (repo_root or discover_repo_root(Path.cwd())).resolve()
+    cache_path = context_path or root / DEFAULT_CONTEXT_PATH
+    cached = _load_context(cache_path)
     effective_repo = repo.strip() if isinstance(repo, str) and repo.strip() else ""
-    if cached is not None:
-        if not effective_repo:
-            return cached
-        if cached.repo == effective_repo:
-            return cached
 
     payload = _repo_view(effective_repo or None)
     name_with_owner = payload.get("nameWithOwner")
@@ -109,11 +107,20 @@ def resolve_context(
     repo_owner = _extract_repo_owner(payload)
     if not repo_owner:
         raise GhCliError("gh repo view did not return repo owner login.")
+    raw_url = payload.get("url")
+    host = urlsplit(raw_url).hostname if isinstance(raw_url, str) else None
+    if not host:
+        raise GhCliError("gh repo view did not return a valid repository URL.")
 
     context = GhContext(
         repo=effective_repo,
         repo_owner=repo_owner,
         repo_name=repo_name,
+        host=host,
+        repo_root=str(root),
     )
-    _write_context(context_path, context)
+    if cached == context:
+        return cached
+    if write_cache:
+        _write_context(cache_path, context)
     return context

@@ -34,10 +34,14 @@ class IssueSummary:
     state: str
 
 
-def _extract_issue_url(output: str) -> str:
-    match = re.search(r"https://github\.com/[^\s]+/issues/\d+", output)
+def extract_issue_url(output: str, github_host: str) -> str:
+    match = re.search(
+        rf"https://{re.escape(github_host)}/[^\s]+/issues/\d+", output
+    )
     if match is None:
-        raise GitHubIssueError(f"Could not parse issue URL from output:\n{output}")
+        raise GitHubIssueError(
+            f"Could not parse issue URL for host {github_host} from output:\n{output}"
+        )
     return match.group(0)
 
 
@@ -79,8 +83,9 @@ def _is_exact_change_id_match(*, body: str, change_id: str) -> bool:
 
 
 class GitHubIssueClient:
-    def __init__(self, repo: str) -> None:
+    def __init__(self, repo: str, github_host: str = "github.com") -> None:
         self.repo = repo
+        self.github_host = github_host
 
     def _search(self, query: str) -> list[IssueSummary]:
         payload = _run(
@@ -162,7 +167,7 @@ class GitHubIssueClient:
             ],
             input_text=body,
         )
-        url = _extract_issue_url(output)
+        url = extract_issue_url(output, self.github_host)
         return self.get_issue(_issue_number_from_url(url))
 
     def edit_issue(self, number: int, title: str, body: str) -> IssueSummary:

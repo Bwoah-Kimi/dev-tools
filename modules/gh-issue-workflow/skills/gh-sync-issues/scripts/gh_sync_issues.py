@@ -244,6 +244,7 @@ def sync_bundle(
     spec_mode: str = "openspec",
     field_mapping: dict | None = None,
     work_issue_type: str = "Task",
+    github_host: str = "github.com",
 ) -> dict[str, Any]:
     if not bundle_path.exists():
         raise SyncError(f"Bundle file not found: {bundle_path}")
@@ -322,7 +323,7 @@ def sync_bundle(
             f"Refusing to continue with {sync_state_path}."
         )
 
-    issue_client = GitHubIssueClient(repo)
+    issue_client = GitHubIssueClient(repo, github_host=github_host)
     task_issue_type_id = require_issue_type_id(
         owner=repo_owner,
         name=repo_name,
