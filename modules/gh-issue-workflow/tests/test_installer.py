@@ -59,6 +59,7 @@ def test_repeated_install_is_idempotent(tmp_path):
     second = run_install(repo, "update")
     assert second.returncode == 0, second.stderr
     assert manifest.read_bytes() == before
+    assert (repo / ".agents" / "skills" / "gh-workflow-init" / "SKILL.md").is_file()
 
 
 def test_non_git_target_is_refused(tmp_path):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 MANAGED_SKILLS = (
-    "gh-plan-to-issues", "gh-sync-issues", "gh-work-queue", "_shared",
+    "gh-workflow-init", "gh-plan-to-issues", "gh-sync-issues", "gh-work-queue", "_shared",
 )
 MANIFEST = Path(".agents/gh-issue-workflow/managed-files.json")
 
