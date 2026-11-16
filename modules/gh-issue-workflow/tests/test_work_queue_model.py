@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / ".codex/skills/_shared"))
 
 import work_queue_model as wq  # noqa: E402
 

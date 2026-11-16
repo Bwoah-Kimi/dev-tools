@@ -5,9 +5,8 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / ".codex/skills/_shared"))
-sys.path.insert(0, str(ROOT / ".codex/skills/gh-work-queue/scripts"))
+MODULE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(MODULE / "skills" / "gh-work-queue" / "scripts"))
 
 import gh_work_queue as cli  # noqa: E402
 import work_queue_model as wq  # noqa: E402

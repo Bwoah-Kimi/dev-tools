@@ -6,18 +6,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / ".codex/skills/_shared"))
+MODULE = Path(__file__).resolve().parents[1]
 
 import issue_bundle as ib  # noqa: E402
 import issue_form as issue_form_module  # noqa: E402
 
-VALIDATOR = ROOT / ".agents/skills/gh-plan-to-issues/scripts/gh_validate_bundle.py"
+VALIDATOR = MODULE / "skills" / "gh-plan-to-issues" / "scripts" / "gh_validate_bundle.py"
 
 
 def _form() -> issue_form_module.IssueForm:
     return issue_form_module.IssueForm(
-        path=ROOT / ".github/ISSUE_TEMPLATE/sub_issue.yml",
+        path=MODULE / "templates" / "sub_issue.yml",
         name="Sub-issue",
         fields=[
             issue_form_module.IssueFormField(
@@ -73,7 +72,7 @@ def _write_bundle(tmp_path: Path, payload: dict[str, Any]) -> Path:
 def _validate(path: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(VALIDATOR), "--bundle", str(path)],
-        cwd=ROOT,
+        cwd=MODULE,
         text=True,
         capture_output=True,
         check=False,
